@@ -1,0 +1,147 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.dolphinscheduler.server.master.engine.executor.plugin.dependent;
+
+import org.apache.dolphinscheduler.common.utils.JSONUtils;
+import org.apache.dolphinscheduler.dao.repository.ProjectDao;
+import org.apache.dolphinscheduler.dao.repository.TaskDefinitionDao;
+import org.apache.dolphinscheduler.dao.repository.TaskInstanceContextDao;
+import org.apache.dolphinscheduler.dao.repository.TaskInstanceDao;
+import org.apache.dolphinscheduler.dao.repository.WorkflowDefinitionDao;
+import org.apache.dolphinscheduler.dao.repository.WorkflowInstanceDao;
+import org.apache.dolphinscheduler.plugin.task.api.TaskExecutionContext;
+import org.apache.dolphinscheduler.plugin.task.api.enums.TaskExecutionStatus;
+import org.apache.dolphinscheduler.plugin.task.api.parameters.DependentParameters;
+import org.apache.dolphinscheduler.server.master.engine.executor.plugin.AbstractLogicTask;
+import org.apache.dolphinscheduler.server.master.engine.executor.plugin.ITaskParameterDeserializer;
+import org.apache.dolphinscheduler.server.master.engine.workflow.execution.IWorkflowExecution;
+import org.apache.dolphinscheduler.server.master.exception.MasterTaskExecuteException;
+
+import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
+
+import lombok.extern.slf4j.Slf4j;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.google.common.annotations.VisibleForTesting;
+
+@Slf4j
+public class DependentLogicTask extends AbstractLogicTask<DependentParameters> {
+
+    private static final int DEFAULT_CHECK_INTERVAL_SECONDS = 10;
+
+    private final TaskExecutionContext taskExecutionContext;
+
+    private final DependentTaskTracker dependentTaskTracker;
+
+    private final long checkIntervalNanos;
+
+    private final LongSupplier nanoTimeSupplier;
+
+    private Long lastCheckTimeNanos;
+
+    public DependentLogicTask(TaskExecutionContext taskExecutionContext,
+                              ProjectDao projectDao,
+                              WorkflowDefinitionDao workflowDefinitionDao,
+                              TaskDefinitionDao taskDefinitionDao,
+                              TaskInstanceDao taskInstanceDao,
+                              WorkflowInstanceDao workflowInstanceDao,
+                              IWorkflowExecution workflowExecution,
+                              TaskInstanceContextDao taskInstanceContextDao) {
+        this(taskExecutionContext, projectDao, workflowDefinitionDao, taskDefinitionDao, taskInstanceDao,
+                workflowInstanceDao, workflowExecution, taskInstanceContextDao, System::nanoTime);
+    }
+
+    @VisibleForTesting
+    DependentLogicTask(TaskExecutionContext taskExecutionContext,
+                       ProjectDao projectDao,
+                       WorkflowDefinitionDao workflowDefinitionDao,
+                       TaskDefinitionDao taskDefinitionDao,
+                       TaskInstanceDao taskInstanceDao,
+                       WorkflowInstanceDao workflowInstanceDao,
+                       IWorkflowExecution workflowExecution,
+                       TaskInstanceContextDao taskInstanceContextDao,
+                       LongSupplier nanoTimeSupplier) {
+        super(taskExecutionContext);
+        this.taskExecutionContext = taskExecutionContext;
+        this.nanoTimeSupplier = nanoTimeSupplier;
+        final Integer checkInterval = taskParameters.getDependence().getCheckInterval();
+        this.checkIntervalNanos = TimeUnit.SECONDS.toNanos(
+                checkInterval == null ? DEFAULT_CHECK_INTERVAL_SECONDS : checkInterval);
+        this.dependentTaskTracker = new DependentTaskTracker(
+                taskExecutionContext,
+                taskParameters,
+                projectDao,
+                workflowDefinitionDao,
+                taskDefinitionDao,
+                taskInstanceDao,
+                workflowInstanceDao,
+                taskInstanceContextDao);
+        onTaskRunning();
+    }
+
+    @Override
+    public void start() throws MasterTaskExecuteException {
+        log.info("Dependent task: {} started", taskExecutionContext.getTaskName());
+    }
+
+    @Override
+    public TaskExecutionStatus getTaskExecutionState() {
+        synchronized (this) {
+            if (!isRunning()) {
+                return taskExecutionStatus;
+            }
+            final long now = nanoTimeSupplier.getAsLong();
+            if (lastCheckTimeNanos != null && now - lastCheckTimeNanos < checkIntervalNanos) {
+                return taskExecutionStatus;
+            }
+            lastCheckTimeNanos = now;
+        }
+        final TaskExecutionStatus dependentState = dependentTaskTracker.getDependentTaskStatus();
+        synchronized (this) {
+            // A pause or kill may have completed while the dependency query was running.
+            if (isRunning()) {
+                taskExecutionStatus = dependentState;
+            }
+            return taskExecutionStatus;
+        }
+    }
+
+    @Override
+    public void pause() throws MasterTaskExecuteException {
+        synchronized (this) {
+            onTaskPaused();
+        }
+        log.info("Pause task : {} success", taskExecutionContext.getTaskName());
+    }
+
+    @Override
+    public void kill() throws MasterTaskExecuteException {
+        synchronized (this) {
+            onTaskKilled();
+        }
+        log.info("Kill task : {} success", taskExecutionContext.getTaskName());
+    }
+
+    @Override
+    public ITaskParameterDeserializer<DependentParameters> getTaskParameterDeserializer() {
+        return taskParamsJson -> JSONUtils.parseObject(taskParamsJson, new TypeReference<DependentParameters>() {
+        });
+    }
+
+}

@@ -19,13 +19,13 @@ package org.apache.dolphinscheduler.api.service;
 
 import org.apache.dolphinscheduler.common.model.Server;
 import org.apache.dolphinscheduler.dao.entity.User;
+import org.apache.dolphinscheduler.dao.plugin.api.monitor.DatabaseMetrics;
+import org.apache.dolphinscheduler.extract.master.dto.WorkflowExecutorDTO;
+import org.apache.dolphinscheduler.registry.api.enums.RegistryNodeType;
+import org.apache.dolphinscheduler.task.executor.dto.TaskExecutorDTO;
 
 import java.util.List;
-import java.util.Map;
 
-/**
- * monitor service
- */
 public interface MonitorService {
 
     /**
@@ -34,31 +34,17 @@ public interface MonitorService {
      * @param loginUser login user
      * @return data base state
      */
-    Map<String,Object> queryDatabaseState(User loginUser);
-    
+    List<DatabaseMetrics> queryDatabaseState(User loginUser);
+
     /**
-     * query master list
+     * query server list
      *
-     * @param loginUser login user
-     * @return master information list
+     * @param nodeType RegistryNodeType
+     * @return server information list
      */
-    Map<String,Object> queryMaster(User loginUser);
-    
-    /**
-     * query zookeeper state
-     *
-     * @param loginUser login user
-     * @return zookeeper information list
-     */
-    Map<String,Object> queryZookeeperState(User loginUser);
-    
-    /**
-     * query worker list
-     *
-     * @param loginUser login user
-     * @return worker information list
-     */
-    Map<String,Object> queryWorker(User loginUser);
-    
-    List<Server> getServerListFromZK(boolean isMaster);
+    List<Server> listServer(RegistryNodeType nodeType);
+
+    List<WorkflowExecutorDTO> queryWorkflowExecutors(User loginUser, String masterAddress);
+
+    List<TaskExecutorDTO> queryTaskExecutors(User loginUser, String serverAddress);
 }

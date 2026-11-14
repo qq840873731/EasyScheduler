@@ -18,26 +18,31 @@
 package org.apache.dolphinscheduler.api.service.impl;
 
 import org.apache.dolphinscheduler.api.enums.Status;
+import org.apache.dolphinscheduler.api.exceptions.ServiceException;
+import org.apache.dolphinscheduler.api.permission.ResourcePermissionCheckService;
 import org.apache.dolphinscheduler.api.service.BaseService;
 import org.apache.dolphinscheduler.api.utils.Result;
-import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.constants.Constants;
+import org.apache.dolphinscheduler.common.enums.AuthorizationType;
 import org.apache.dolphinscheduler.common.enums.UserType;
 import org.apache.dolphinscheduler.common.utils.DateUtils;
-import org.apache.dolphinscheduler.common.utils.HadoopUtils;
-import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.apache.dolphinscheduler.dao.entity.User;
 
-import java.io.IOException;
+import org.apache.commons.lang3.StringUtils;
+
 import java.text.MessageFormat;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
 
-/**
- * base service impl
- */
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.beans.factory.annotation.Autowired;
+
+@Slf4j
 public class BaseServiceImpl implements BaseService {
+
+    @Autowired
+    protected ResourcePermissionCheckService resourcePermissionCheckService;
 
     /**
      * check admin
@@ -54,34 +59,12 @@ public class BaseServiceImpl implements BaseService {
      * isNotAdmin
      *
      * @param loginUser login user
-     * @param result result code
      * @return true if not administrator, otherwise false
      */
     @Override
-    public boolean isNotAdmin(User loginUser, Map<String, Object> result) {
-        //only admin can operate
-        if (!isAdmin(loginUser)) {
-            putMsg(result, Status.USER_NO_OPERATION_PERM);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * put message to map
-     *
-     * @param result result code
-     * @param status status
-     * @param statusParams status message
-     */
-    @Override
-    public void putMsg(Map<String, Object> result, Status status, Object... statusParams) {
-        result.put(Constants.STATUS, status);
-        if (statusParams != null && statusParams.length > 0) {
-            result.put(Constants.MSG, MessageFormat.format(status.getMsg(), statusParams));
-        } else {
-            result.put(Constants.MSG, status.getMsg());
-        }
+    public boolean isNotAdmin(User loginUser) {
+        // only admin can operate
+        return !isAdmin(loginUser);
     }
 
     /**
@@ -102,82 +85,58 @@ public class BaseServiceImpl implements BaseService {
     }
 
     /**
-     * check
-     *
-     * @param result result
-     * @param bool bool
-     * @param userNoOperationPerm status
-     * @return check result
-     */
-    @Override
-    public boolean check(Map<String, Object> result, boolean bool, Status userNoOperationPerm) {
-        // only admin can operate
-        if (bool) {
-            result.put(Constants.STATUS, userNoOperationPerm);
-            result.put(Constants.MSG, userNoOperationPerm.getMsg());
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * create tenant dir if not exists
-     *
-     * @param tenantCode tenant code
-     * @throws IOException if hdfs operation exception
-     */
-    @Override
-    public void createTenantDirIfNotExists(String tenantCode) throws IOException {
-        String resourcePath = HadoopUtils.getHdfsResDir(tenantCode);
-        String udfsPath = HadoopUtils.getHdfsUdfDir(tenantCode);
-        // init resource path and udf path
-        HadoopUtils.getInstance().mkdir(resourcePath);
-        HadoopUtils.getInstance().mkdir(udfsPath);
-    }
-
-    /**
-     * has perm
+     * Verify that the operator has permissions
      *
      * @param operateUser operate user
      * @param createUserId create user id
      */
     @Override
-    public boolean hasPerm(User operateUser, int createUserId) {
+    public boolean canOperator(User operateUser, int createUserId) {
         return operateUser.getId() == createUserId || isAdmin(operateUser);
     }
 
     /**
-     * check and parse date parameters
-     *
-     * @param startDateStr start date string
-     * @param endDateStr end date string
-     * @return map<status,startDate,endDate>
+     * Verify that the operator has permissions
+     * @param user operate user
+     * @param ids Object[]
+     * @param type AuthorizationType
+     * @return boolean
      */
     @Override
-    public Map<String, Object> checkAndParseDateParameters(String startDateStr, String endDateStr) {
-        Map<String, Object> result = new HashMap<>();
-        Date start = null;
-        if (StringUtils.isNotEmpty(startDateStr)) {
-            start = DateUtils.getScheduleDate(startDateStr);
-            if (Objects.isNull(start)) {
-                putMsg(result, Status.REQUEST_PARAMS_NOT_VALID_ERROR, Constants.START_END_DATE);
-                return result;
-            }
-        }
-        result.put(Constants.START_TIME, start);
-
-        Date end = null;
-        if (StringUtils.isNotEmpty(endDateStr)) {
-            end = DateUtils.getScheduleDate(endDateStr);
-            if (Objects.isNull(end)) {
-                putMsg(result, Status.REQUEST_PARAMS_NOT_VALID_ERROR, Constants.START_END_DATE);
-                return result;
-            }
-        }
-        result.put(Constants.END_TIME, end);
-
-        putMsg(result, Status.SUCCESS);
-        return result;
+    public boolean canOperatorPermissions(User user, Object[] ids, AuthorizationType type, String permissionKey) {
+        boolean operationPermissionCheck =
+                resourcePermissionCheckService.operationPermissionCheck(type, user.getId(), permissionKey, log);
+        boolean resourcePermissionCheck = resourcePermissionCheckService.resourcePermissionCheck(type, ids,
+                user.getUserType().equals(UserType.ADMIN_USER) ? 0 : user.getId(), log);
+        return operationPermissionCheck && resourcePermissionCheck;
     }
 
+    /**
+     * check and parse date parameters
+     */
+    @Override
+    public Date checkAndParseDateParameters(String startDateStr) throws ServiceException {
+        Date start = null;
+        if (!StringUtils.isEmpty(startDateStr)) {
+            start = DateUtils.stringToDate(startDateStr);
+            if (Objects.isNull(start)) {
+                log.warn("Parameter startDateStr is invalid.");
+                throw new ServiceException(Status.REQUEST_PARAMS_NOT_VALID_ERROR, Constants.START_END_DATE);
+            }
+        }
+        return start;
+    }
+
+    @Override
+    public boolean checkDescriptionLength(String description) {
+        return description != null && description.codePointCount(0, description.length()) > 255;
+    }
+
+    protected Date transformDate(String dateStr) {
+        Date date = DateUtils.stringToDate(dateStr);
+        if (date == null) {
+            throw new IllegalArgumentException("dateStr: [" + dateStr + "] is invalid");
+        }
+        return date;
+    }
 }

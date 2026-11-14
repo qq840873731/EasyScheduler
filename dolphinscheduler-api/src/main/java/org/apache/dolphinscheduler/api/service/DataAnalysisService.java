@@ -17,64 +17,59 @@
 
 package org.apache.dolphinscheduler.api.service;
 
+import org.apache.dolphinscheduler.api.dto.CommandStateCount;
+import org.apache.dolphinscheduler.api.utils.PageInfo;
+import org.apache.dolphinscheduler.api.vo.TaskInstanceCountVO;
+import org.apache.dolphinscheduler.api.vo.WorkflowDefinitionCountVO;
+import org.apache.dolphinscheduler.api.vo.WorkflowInstanceCountVO;
+import org.apache.dolphinscheduler.dao.entity.Command;
+import org.apache.dolphinscheduler.dao.entity.ErrorCommand;
 import org.apache.dolphinscheduler.dao.entity.User;
 
+import java.util.List;
 import java.util.Map;
 
-/**
- * data analysis service
- */
 public interface DataAnalysisService {
 
-    /**
-     * statistical task instance status data
-     *
-     * @param loginUser login user
-     * @param projectId project id
-     * @param startDate start date
-     * @param endDate end date
-     * @return task state count data
-     */
-    Map<String, Object> countTaskStateByProject(User loginUser, int projectId, String startDate, String endDate);
+    TaskInstanceCountVO getTaskInstanceStateCountByProject(User loginUser,
+                                                           Long projectCode,
+                                                           String startDate,
+                                                           String endDate);
 
-    /**
-     * statistical process instance status data
-     *
-     * @param loginUser login user
-     * @param projectId project id
-     * @param startDate start date
-     * @param endDate end date
-     * @return process instance state count data
-     */
-    Map<String, Object> countProcessInstanceStateByProject(User loginUser, int projectId, String startDate, String endDate);
+    TaskInstanceCountVO getAllTaskInstanceStateCount(User loginUser,
+                                                     String startDate,
+                                                     String endDate);
 
-    /**
-     * statistics the process definition quantities of certain person
-     *
-     * @param loginUser login user
-     * @param projectId project id
-     * @return definition count data
-     */
-    Map<String, Object> countDefinitionByUser(User loginUser, int projectId);
+    WorkflowInstanceCountVO getWorkflowInstanceStateCountByProject(User loginUser,
+                                                                   Long projectCodes,
+                                                                   String startDate,
+                                                                   String endDate);
+
+    WorkflowInstanceCountVO getAllWorkflowInstanceStateCount(User loginUser,
+                                                             String startDate,
+                                                             String endDate);
+
+    WorkflowDefinitionCountVO getWorkflowDefinitionCountByProject(User loginUser, Long projectCode);
+
+    WorkflowDefinitionCountVO getAllWorkflowDefinitionCount(User loginUser);
 
     /**
      * statistical command status data
      *
      * @param loginUser login user
-     * @param projectId project id
-     * @param startDate start date
-     * @param endDate end date
      * @return command state count data
      */
-    Map<String, Object> countCommandState(User loginUser, int projectId, String startDate, String endDate);
+    List<CommandStateCount> countCommandState(User loginUser);
 
     /**
      * count queue state
      *
      * @param loginUser login user
-     * @param projectId project id
      * @return queue state count data
      */
-    Map<String, Object> countQueueState(User loginUser, int projectId);
+    Map<String, Integer> countQueueState(User loginUser);
 
+    PageInfo<Command> listPendingCommands(User loginUser, Long projectCode, Integer pageNo, Integer pageSize);
+
+    PageInfo<ErrorCommand> listErrorCommand(User loginUser, Long projectCode, Integer pageNo, Integer pageSize);
 }

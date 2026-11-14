@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.common.shell;
 
 import java.io.BufferedReader;
@@ -34,20 +35,6 @@ public class ShellExecutor extends AbstractShell {
     private String[] command;
     private StringBuffer output;
 
-
-    public ShellExecutor(String... execString) {
-        this(execString, null);
-    }
-
-    public ShellExecutor(String[] execString, File dir) {
-        this(execString, dir, null);
-    }
-
-    public ShellExecutor(String[] execString, File dir,
-                                Map<String, String> env) {
-        this(execString, dir, env , 0L);
-    }
-
     /**
      * Create a new instance of the ShellExecutor to execute a command.
      *
@@ -63,7 +50,7 @@ public class ShellExecutor extends AbstractShell {
      *                If 0, the command will not be timed out.
      */
     public ShellExecutor(String[] execString, File dir,
-                                Map<String, String> env, long timeout) {
+                         Map<String, String> env, long timeout) {
         command = execString.clone();
         if (dir != null) {
             setWorkingDirectory(dir);
@@ -73,7 +60,6 @@ public class ShellExecutor extends AbstractShell {
         }
         timeOutInterval = timeout;
     }
-
 
     /**
      * Static method to execute a shell command.
@@ -106,20 +92,6 @@ public class ShellExecutor extends AbstractShell {
     }
 
     /**
-     * Static method to execute a shell command.
-     * Covers most of the simple cases without requiring the user to implement
-     * the <code>AbstractShell</code> interface.
-     * @param env the map of environment key=value
-     * @param cmd shell command to execute.
-     * @return the output of the executed command.
-     * @throws IOException errors
-     */
-    public static String execCommand(Map<String,String> env, String ... cmd)
-            throws IOException {
-        return execCommand(env, cmd, 0L);
-    }
-
-    /**
      * Execute the shell command
      * @throws IOException errors
      */
@@ -138,8 +110,8 @@ public class ShellExecutor extends AbstractShell {
         char[] buf = new char[1024];
         int nRead;
         String line = "";
-        while ( (nRead = lines.read(buf, 0, buf.length)) > 0 ) {
-            line = new String(buf,0,nRead);
+        while ((nRead = lines.read(buf, 0, buf.length)) > 0) {
+            line = new String(buf, 0, nRead);
             output.append(line);
         }
     }
@@ -151,7 +123,6 @@ public class ShellExecutor extends AbstractShell {
     public String getOutput() {
         return (output == null) ? "" : output.toString();
     }
-
 
     /**
      * Returns the commands of this instance.

@@ -17,45 +17,79 @@
 
 package org.apache.dolphinscheduler.api.service;
 
-import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
+import org.apache.dolphinscheduler.api.utils.PageInfo;
+import org.apache.dolphinscheduler.api.utils.Result;
+import org.apache.dolphinscheduler.common.enums.TaskExecuteType;
+import org.apache.dolphinscheduler.dao.entity.TaskInstance;
 import org.apache.dolphinscheduler.dao.entity.User;
+import org.apache.dolphinscheduler.plugin.task.api.enums.TaskExecutionStatus;
 
-import java.util.Map;
-
-/**
- * task instance service
- */
 public interface TaskInstanceService {
 
     /**
-     * query task list by project, process instance, task name, task start time, task end time, task status, keyword paging
+     * query task list by project, workflow instance, task name, task start time, task end time, task status, keyword paging
      *
      * @param loginUser login user
-     * @param projectName project name
-     * @param processInstanceId process instance id
+     * @param projectCode project code
+     * @param workflowInstanceId workflow instance id
      * @param searchVal search value
      * @param taskName task name
+     * @param taskCode task code
      * @param stateType state type
      * @param host host
      * @param startDate start time
      * @param endDate end time
+     * @param taskExecuteType task execute type
      * @param pageNo page number
      * @param pageSize page size
      * @return task list page
      */
-    Map<String, Object> queryTaskListPaging(User loginUser, String projectName,
-                                            Integer processInstanceId, String processInstanceName, String taskName, String executorName, String startDate,
-                                            String endDate, String searchVal, ExecutionStatus stateType, String host,
-                                            Integer pageNo, Integer pageSize);
+    Result<PageInfo<TaskInstance>> queryTaskListPaging(User loginUser,
+                                                       long projectCode,
+                                                       Integer workflowInstanceId,
+                                                       String workflowInstanceName,
+                                                       String workflowDefinitionName,
+                                                       String taskName,
+                                                       Long taskCode,
+                                                       String executorName,
+                                                       String startDate,
+                                                       String endDate,
+                                                       String searchVal,
+                                                       TaskExecutionStatus stateType,
+                                                       String host,
+                                                       TaskExecuteType taskExecuteType,
+                                                       Integer pageNo,
+                                                       Integer pageSize);
 
     /**
      * change one task instance's state from failure to forced success
      *
-     * @param loginUser      login user
-     * @param projectName    project name
+     * @param loginUser login user
+     * @param projectCode project code
      * @param taskInstanceId task instance id
      * @return the result code and msg
      */
-    Map<String, Object> forceTaskSuccess(User loginUser, String projectName, Integer taskInstanceId);
+    void forceTaskSuccess(User loginUser,
+                          long projectCode,
+                          Integer taskInstanceId);
 
+    /**
+     * task savepoint
+     * @param loginUser
+     * @param projectCode
+     * @param taskInstanceId
+     * @return
+     */
+    Result taskSavePoint(User loginUser, long projectCode, Integer taskInstanceId);
+
+    /**
+     * stop task
+     * @param loginUser
+     * @param projectCode
+     * @param taskInstanceId
+     * @return
+     */
+    Result stopTask(User loginUser, long projectCode, Integer taskInstanceId);
+
+    void deleteByWorkflowInstanceId(Integer workflowInstanceId);
 }

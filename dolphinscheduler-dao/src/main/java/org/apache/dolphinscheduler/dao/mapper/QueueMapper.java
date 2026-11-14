@@ -14,18 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.dao.mapper;
 
 import org.apache.dolphinscheduler.dao.entity.Queue;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.baomidou.mybatisplus.core.metadata.IPage;
+
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
-/**
- * queue mapper interface
- */
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+
 public interface QueueMapper extends BaseMapper<Queue> {
 
     /**
@@ -34,7 +34,7 @@ public interface QueueMapper extends BaseMapper<Queue> {
      * @param searchVal searchVal
      * @return queue IPage
      */
-    IPage<Queue> queryQueuePaging(IPage<Queue> page,
+    IPage<Queue> queryQueuePaging(IPage<Queue> page, @Param("ids") List<Integer> ids,
                                   @Param("searchVal") String searchVal);
 
     /**
@@ -44,7 +44,7 @@ public interface QueueMapper extends BaseMapper<Queue> {
      * @return queue list
      */
     List<Queue> queryAllQueueList(@Param("queue") String queue,
-                             @Param("queueName") String queueName);
+                                  @Param("queueName") String queueName);
 
     /**
      * check the target queue exist
@@ -53,4 +53,12 @@ public interface QueueMapper extends BaseMapper<Queue> {
      * @return true if exist else return null
      */
     Boolean existQueue(@Param("queue") String queue, @Param("queueName") String queueName);
+
+    /**
+     * query simple queue object by queue name and queue
+     * @param queue queue
+     * @param queueName queueName
+     * @return queue object
+     */
+    Queue queryQueueName(@Param("queue") String queue, @Param("queueName") String queueName);
 }

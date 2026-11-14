@@ -14,25 +14,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.dao.entity;
 
+import java.util.Objects;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class WorkFlowRelation {
-    private int sourceWorkFlowId;
-    private int targetWorkFlowId;
 
-    public int getSourceWorkFlowId() {
-        return sourceWorkFlowId;
+    private long sourceWorkFlowCode;
+    private long targetWorkFlowCode;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        WorkFlowRelation that = (WorkFlowRelation) o;
+        return sourceWorkFlowCode == that.sourceWorkFlowCode
+                && targetWorkFlowCode == that.targetWorkFlowCode;
     }
 
-    public void setSourceWorkFlowId(int sourceWorkFlowId) {
-        this.sourceWorkFlowId = sourceWorkFlowId;
-    }
-
-    public int getTargetWorkFlowId() {
-        return targetWorkFlowId;
-    }
-
-    public void setTargetWorkFlowId(int targetWorkFlowId) {
-        this.targetWorkFlowId = targetWorkFlowId;
+    @Override
+    public int hashCode() {
+        return Objects.hash(sourceWorkFlowCode, targetWorkFlowCode);
     }
 }

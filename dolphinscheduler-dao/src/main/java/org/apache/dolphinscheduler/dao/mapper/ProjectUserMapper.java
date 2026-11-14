@@ -14,19 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.dao.mapper;
 
 import org.apache.dolphinscheduler.dao.entity.ProjectUser;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+
 import org.apache.ibatis.annotations.Param;
 
-/**
- * project user mapper interface
- */
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+
 public interface ProjectUserMapper extends BaseMapper<ProjectUser> {
 
     /**
-     * delte prject user relation
+     * delete project user relation
+     *
      * @param projectId projectId
      * @param userId userId
      * @return delete result
@@ -36,6 +37,7 @@ public interface ProjectUserMapper extends BaseMapper<ProjectUser> {
 
     /**
      * query project relation
+     *
      * @param projectId projectId
      * @param userId userId
      * @return project user relation

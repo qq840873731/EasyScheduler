@@ -17,88 +17,111 @@
 
 package org.apache.dolphinscheduler.api.service.impl;
 
+import static org.apache.dolphinscheduler.api.constants.ApiFuncIdentificationConstant.ACCESS_TOKEN_DELETE;
+
 import org.apache.dolphinscheduler.api.enums.Status;
+import org.apache.dolphinscheduler.api.exceptions.ServiceException;
 import org.apache.dolphinscheduler.api.service.AccessTokenService;
 import org.apache.dolphinscheduler.api.utils.PageInfo;
-import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.enums.AuthorizationType;
 import org.apache.dolphinscheduler.common.enums.UserType;
 import org.apache.dolphinscheduler.common.utils.DateUtils;
 import org.apache.dolphinscheduler.common.utils.EncryptionUtils;
 import org.apache.dolphinscheduler.dao.entity.AccessToken;
 import org.apache.dolphinscheduler.dao.entity.User;
-import org.apache.dolphinscheduler.dao.mapper.AccessTokenMapper;
+import org.apache.dolphinscheduler.dao.repository.AccessTokenDao;
+
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
-/**
- * access token service impl
- */
 @Service
+@Slf4j
 public class AccessTokenServiceImpl extends BaseServiceImpl implements AccessTokenService {
 
-    private static final Logger logger = LoggerFactory.getLogger(AccessTokenServiceImpl.class);
-
     @Autowired
-    private AccessTokenMapper accessTokenMapper;
+    private AccessTokenDao accessTokenDao;
 
     /**
      * query access token list
      *
      * @param loginUser login user
      * @param searchVal search value
-     * @param pageNo page number
-     * @param pageSize page size
+     * @param pageNo    page number
+     * @param pageSize  page size
      * @return token list for page number and page size
      */
     @Override
-    public Map<String, Object> queryAccessTokenList(User loginUser, String searchVal, Integer pageNo, Integer pageSize) {
-        Map<String, Object> result = new HashMap<>();
-
+    public PageInfo<AccessToken> queryAccessTokenList(User loginUser, String searchVal, Integer pageNo,
+                                                      Integer pageSize) {
         PageInfo<AccessToken> pageInfo = new PageInfo<>(pageNo, pageSize);
         Page<AccessToken> page = new Page<>(pageNo, pageSize);
         int userId = loginUser.getId();
         if (loginUser.getUserType() == UserType.ADMIN_USER) {
             userId = 0;
         }
-        IPage<AccessToken> accessTokenList = accessTokenMapper.selectAccessTokenPage(page, searchVal, userId);
-        pageInfo.setTotalCount((int) accessTokenList.getTotal());
-        pageInfo.setLists(accessTokenList.getRecords());
-        result.put(Constants.DATA_LIST, pageInfo);
-        putMsg(result, Status.SUCCESS);
+        IPage<AccessToken> accessTokenList = accessTokenDao.queryAccessTokenPage(page, searchVal, userId);
+        pageInfo.setTotal((int) accessTokenList.getTotal());
+        pageInfo.setTotalList(accessTokenList.getRecords());
+        return pageInfo;
+    }
 
-        return result;
+    /**
+     * query access token for specified user
+     *
+     * @param loginUser login user
+     * @param userId    user id
+     * @return token list for specified user
+     */
+    @Override
+    public List<AccessToken> queryAccessTokenByUser(User loginUser, Integer userId) {
+        // no permission
+        if (loginUser.getUserType().equals(UserType.GENERAL_USER) && loginUser.getId() != userId) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
+        }
+        userId = loginUser.getUserType().equals(UserType.ADMIN_USER) ? 0 : userId;
+        // query access token for specified user
+        List<AccessToken> accessTokenList = this.accessTokenDao.queryAccessTokenByUser(userId);
+        return accessTokenList;
     }
 
     /**
      * create token
      *
+     * @param loginUser loginUser
      * @param userId token for user
      * @param expireTime token expire time
-     * @param token token string
+     * @param token token string (if it is absent, it will be automatically generated)
      * @return create result code
      */
+    @SuppressWarnings("checkstyle:WhitespaceAround")
     @Override
-    public Map<String, Object> createToken(User loginUser, int userId, String expireTime, String token) {
-        Map<String, Object> result = new HashMap<>();
+    public AccessToken createToken(User loginUser, int userId, String expireTime, String token) {
 
-        if (!hasPerm(loginUser,userId)){
-            putMsg(result, Status.USER_NO_OPERATION_PERM);
-            return result;
-        }
+        // 1. check permission
+        checkAccessTokenTargetUserIsLoginUserOrAdmin(loginUser, userId);
 
+        // 2. check if user is existed
         if (userId <= 0) {
-            throw new IllegalArgumentException("User id should not less than or equals to 0.");
+            throw new ServiceException(Status.REQUEST_PARAMS_NOT_VALID_ERROR,
+                    "User id: " + userId + " should not less than or equals to 0.");
         }
+
+        // 3. generate access token if absent
+        if (StringUtils.isBlank(token)) {
+            token = EncryptionUtils.getMd5(userId + expireTime + System.currentTimeMillis());
+        }
+
+        // 4. persist to the database
         AccessToken accessToken = new AccessToken();
         accessToken.setUserId(userId);
         accessToken.setExpireTime(DateUtils.stringToDate(expireTime));
@@ -106,98 +129,101 @@ public class AccessTokenServiceImpl extends BaseServiceImpl implements AccessTok
         accessToken.setCreateTime(new Date());
         accessToken.setUpdateTime(new Date());
 
-        // insert
-        int insert = accessTokenMapper.insert(accessToken);
+        int insert = accessTokenDao.insert(accessToken);
 
         if (insert > 0) {
-            putMsg(result, Status.SUCCESS);
-        } else {
-            putMsg(result, Status.CREATE_ACCESS_TOKEN_ERROR);
+            return accessToken;
         }
-
-        return result;
+        throw new ServiceException(Status.CREATE_ACCESS_TOKEN_ERROR);
     }
 
     /**
      * generate token
      *
-     * @param userId token for user
+     * @param loginUser
+     * @param userId     token for user
      * @param expireTime token expire time
      * @return token string
      */
     @Override
-    public Map<String, Object> generateToken(User loginUser, int userId, String expireTime) {
-        Map<String, Object> result = new HashMap<>();
-        if (!hasPerm(loginUser,userId)){
-            putMsg(result, Status.USER_NO_OPERATION_PERM);
-            return result;
-        }
-        String token = EncryptionUtils.getMd5(userId + expireTime + System.currentTimeMillis());
-        result.put(Constants.DATA_LIST, token);
-        putMsg(result, Status.SUCCESS);
-        return result;
+    public String generateToken(User loginUser, int userId, String expireTime) {
+        return EncryptionUtils.getMd5(userId + expireTime + System.currentTimeMillis());
     }
 
     /**
      * delete access token
      *
      * @param loginUser login user
-     * @param id token id
+     * @param id        token id
      * @return delete result code
      */
     @Override
-    public Map<String, Object> delAccessTokenById(User loginUser, int id) {
-        Map<String, Object> result = new HashMap<>();
+    public void deleteAccessTokenById(User loginUser, int id) {
+        if (!canOperatorPermissions(loginUser, null, AuthorizationType.ACCESS_TOKEN, ACCESS_TOKEN_DELETE)) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
+        }
 
-        AccessToken accessToken = accessTokenMapper.selectById(id);
-
+        AccessToken accessToken = accessTokenDao.queryById(id);
         if (accessToken == null) {
-            logger.error("access token not exist,  access token id {}", id);
-            putMsg(result, Status.ACCESS_TOKEN_NOT_EXIST);
-            return result;
+            throw new ServiceException(Status.ACCESS_TOKEN_NOT_EXIST, id);
         }
 
-
-        if (!hasPerm(loginUser,accessToken.getUserId())){
-            putMsg(result, Status.USER_NO_OPERATION_PERM);
-            return result;
+        // admin can operate all, non-admin can operate their own
+        if (accessToken.getUserId() != loginUser.getId() && !loginUser.getUserType().equals(UserType.ADMIN_USER)) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
         }
-
-        accessTokenMapper.deleteById(id);
-        putMsg(result, Status.SUCCESS);
-        return result;
+        accessTokenDao.deleteById(id);
     }
 
     /**
      * update token by id
      *
-     * @param id token id
-     * @param userId token for user
+     * @param id         token id
+     * @param userId     token for user
      * @param expireTime token expire time
-     * @param token token string
-     * @return update result code
+     * @param token      token string (if it is absent, it will be automatically generated)
+     * @return updated access token entity
      */
     @Override
-    public Map<String, Object> updateToken(User loginUser, int id, int userId, String expireTime, String token) {
-        Map<String, Object> result = new HashMap<>();
-        if (!hasPerm(loginUser,userId)){
-            putMsg(result, Status.USER_NO_OPERATION_PERM);
-            return result;
-        }
-        AccessToken accessToken = accessTokenMapper.selectById(id);
+    public AccessToken updateToken(User loginUser, int id, int userId, String expireTime, String token) {
+
+        // 1. check permission
+        checkAccessTokenTargetUserIsLoginUserOrAdmin(loginUser, userId);
+
+        // 2. check if token is existed
+        AccessToken accessToken = accessTokenDao.queryById(id);
         if (accessToken == null) {
-            logger.error("access token not exist,  access token id {}", id);
-            putMsg(result, Status.ACCESS_TOKEN_NOT_EXIST);
-            return result;
+            log.error("Access token does not exist, accessTokenId:{}.", id);
+            throw new ServiceException(Status.ACCESS_TOKEN_NOT_EXIST, id);
         }
+        checkAccessTokenOwnerIsLoginUserOrAdmin(loginUser, accessToken);
+
+        // 3. generate access token if absent
+        if (StringUtils.isBlank(token)) {
+            token = EncryptionUtils.getMd5(userId + expireTime + System.currentTimeMillis());
+        }
+
+        // 4. persist to the database
         accessToken.setUserId(userId);
         accessToken.setExpireTime(DateUtils.stringToDate(expireTime));
         accessToken.setToken(token);
         accessToken.setUpdateTime(new Date());
 
-        accessTokenMapper.updateById(accessToken);
+        if (!accessTokenDao.updateById(accessToken)) {
+            throw new ServiceException(Status.ACCESS_TOKEN_NOT_EXIST, id);
+        }
+        return accessToken;
+    }
 
-        putMsg(result, Status.SUCCESS);
-        return result;
+    private void checkAccessTokenTargetUserIsLoginUserOrAdmin(User loginUser, int userId) {
+        if (!isAdmin(loginUser) && loginUser.getId() != userId) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
+        }
+    }
+
+    private void checkAccessTokenOwnerIsLoginUserOrAdmin(User loginUser, AccessToken accessToken) {
+        if (!isAdmin(loginUser) && accessToken.getUserId() != loginUser.getId()) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
+        }
     }
 }

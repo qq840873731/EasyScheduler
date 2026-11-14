@@ -22,8 +22,9 @@ import com.fasterxml.jackson.annotation.JsonValue;
 public enum FormType {
 
     INPUT("input"),
-
-    RADIO("radio");
+    INPUTNUMBER("input-number"),
+    RADIO("radio"),
+    SELECT("select");
 
     private String formType;
 

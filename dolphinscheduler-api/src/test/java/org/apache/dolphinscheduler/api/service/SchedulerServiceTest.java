@@ -17,171 +17,502 @@
 
 package org.apache.dolphinscheduler.api.service;
 
+import org.apache.dolphinscheduler.api.dto.ScheduleParam;
 import org.apache.dolphinscheduler.api.enums.Status;
-import org.apache.dolphinscheduler.api.service.impl.ProjectServiceImpl;
+import org.apache.dolphinscheduler.api.exceptions.ServiceException;
 import org.apache.dolphinscheduler.api.service.impl.SchedulerServiceImpl;
-import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.api.validator.TenantExistValidator;
+import org.apache.dolphinscheduler.common.enums.FailureStrategy;
+import org.apache.dolphinscheduler.common.enums.Priority;
 import org.apache.dolphinscheduler.common.enums.ReleaseState;
-import org.apache.dolphinscheduler.common.model.Server;
-import org.apache.dolphinscheduler.dao.entity.ProcessDefinition;
+import org.apache.dolphinscheduler.common.enums.ScheduleMissedFirePolicy;
+import org.apache.dolphinscheduler.common.enums.WarningType;
+import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.dao.entity.Project;
 import org.apache.dolphinscheduler.dao.entity.Schedule;
 import org.apache.dolphinscheduler.dao.entity.User;
-import org.apache.dolphinscheduler.dao.mapper.ProjectMapper;
-import org.apache.dolphinscheduler.dao.mapper.ScheduleMapper;
-import org.apache.dolphinscheduler.service.process.ProcessService;
-import org.apache.dolphinscheduler.service.quartz.QuartzExecutors;
+import org.apache.dolphinscheduler.dao.entity.WorkflowDefinition;
+import org.apache.dolphinscheduler.dao.repository.ProjectDao;
+import org.apache.dolphinscheduler.dao.repository.ScheduleDao;
+import org.apache.dolphinscheduler.dao.repository.WorkflowDefinitionDao;
+import org.apache.dolphinscheduler.scheduler.api.SchedulerApi;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-/**
- * scheduler service test
- */
-@RunWith(PowerMockRunner.class)
-@PrepareForTest(QuartzExecutors.class)
-public class SchedulerServiceTest {
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+public class SchedulerServiceTest extends BaseServiceTestTool {
 
     @InjectMocks
     private SchedulerServiceImpl schedulerService;
 
     @Mock
-    private MonitorService monitorService;
+    private ScheduleDao scheduleDao;
 
     @Mock
-    private ProcessService processService;
+    private ProjectDao projectDao;
 
     @Mock
-    private ScheduleMapper scheduleMapper;
+    private WorkflowDefinitionDao workflowDefinitionDao;
 
     @Mock
-    private ProjectMapper projectMapper;
+    private ProjectService projectService;
 
     @Mock
-    private ProjectServiceImpl projectService;
+    private ExecutorService executorService;
 
     @Mock
-    private QuartzExecutors quartzExecutors;
+    private TenantExistValidator tenantExistValidator;
 
-    @Before
+    @Mock
+    private SchedulerApi schedulerApi;
+
+    protected static User user;
+    protected Exception exception;
+    private static final String userName = "userName";
+    private static final String projectName = "projectName";
+    private static final long projectCode = 1L;
+    private static final int userId = 1;
+    private static final String processDefinitionName = "processDefinitionName";
+    private static final long processDefinitionCode = 2L;
+    private static final int processDefinitionVersion = 3;
+    private static final int scheduleId = 3;
+    private static final long environmentCode = 4L;
+
+    @BeforeEach
     public void setUp() {
-
-        quartzExecutors = PowerMockito.mock(QuartzExecutors.class);
-        PowerMockito.mockStatic(QuartzExecutors.class);
-        try {
-            PowerMockito.doReturn(quartzExecutors).when(QuartzExecutors.class, "getInstance");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
+        user = new User();
+        user.setUserName(userName);
+        user.setId(userId);
     }
 
     @Test
-    public void testSetScheduleState() {
+    public void testScheduleParamMissedFirePolicyPresence() {
+        String scheduleWithoutPolicy = "{\"startTime\":\"2019-12-16 00:00:00\","
+                + "\"endTime\":\"2019-12-17 00:00:00\",\"crontab\":\"0 0 6 * * ? *\"}";
+        String scheduleWithPolicy = "{\"startTime\":\"2019-12-16 00:00:00\","
+                + "\"endTime\":\"2019-12-17 00:00:00\",\"crontab\":\"0 0 6 * * ? *\","
+                + "\"missedFirePolicy\":\"SKIP_MISSED\"}";
 
+        ScheduleParam withoutPolicy = JSONUtils.parseObject(scheduleWithoutPolicy, ScheduleParam.class);
+        ScheduleParam withPolicy = JSONUtils.parseObject(scheduleWithPolicy, ScheduleParam.class);
 
-        String projectName = "test";
-        User loginUser = new User();
-        loginUser.setId(1);
-        Map<String, Object> result = new HashMap<String, Object>();
-        Project project = getProject(projectName);
+        Assertions.assertEquals(ScheduleMissedFirePolicy.FIRE_ALL_MISSED, withoutPolicy.getMissedFirePolicy());
+        Assertions.assertFalse(withoutPolicy.isMissedFirePolicySet());
+        Assertions.assertEquals(ScheduleMissedFirePolicy.SKIP_MISSED, withPolicy.getMissedFirePolicy());
+        Assertions.assertTrue(withPolicy.isMissedFirePolicySet());
+    }
 
+    @ParameterizedTest
+    @EnumSource(ScheduleMissedFirePolicy.class)
+    public void testInsertScheduleWithMissedFirePolicy(ScheduleMissedFirePolicy missedFirePolicy) {
+        Project project = this.getProject();
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        Schedule insertedSchedule = new Schedule();
+        insertedSchedule.setId(scheduleId);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.when(scheduleDao.queryByWorkflowDefinitionCode(processDefinitionCode)).thenReturn(null);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+        Mockito.when(scheduleDao.queryById(Mockito.any())).thenReturn(insertedSchedule);
 
-        ProcessDefinition processDefinition = new ProcessDefinition();
+        Schedule result = schedulerService.insertSchedule(
+                user, projectCode, processDefinitionCode, scheduleExpression(missedFirePolicy), WarningType.NONE, 0,
+                FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode);
 
-        Schedule schedule = new Schedule();
-        schedule.setId(1);
-        schedule.setProcessDefinitionId(1);
+        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
+        Mockito.verify(scheduleDao).insert(scheduleCaptor.capture());
+        Assertions.assertEquals(missedFirePolicy, scheduleCaptor.getValue().getMissedFirePolicy());
+        Assertions.assertSame(insertedSchedule, result);
+    }
+
+    @Test
+    public void testInsertScheduleDefaultsMissedFirePolicy() {
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryByWorkflowDefinitionCode(processDefinitionCode)).thenReturn(null);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(this.getProcessDefinition()));
+        Mockito.when(scheduleDao.queryById(Mockito.anyInt())).thenReturn(new Schedule());
+
+        schedulerService.insertSchedule(
+                user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode);
+
+        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
+        Mockito.verify(scheduleDao).insert(scheduleCaptor.capture());
+        Assertions.assertEquals(ScheduleMissedFirePolicy.FIRE_ALL_MISSED,
+                scheduleCaptor.getValue().getMissedFirePolicy());
+    }
+
+    @Test
+    public void testInsertScheduleRejectsExplicitNullMissedFirePolicy() {
+        assertInsertScheduleRejectsInvalidMissedFirePolicy("null");
+    }
+
+    @Test
+    public void testInsertScheduleRejectsUnknownMissedFirePolicy() {
+        assertInsertScheduleRejectsInvalidMissedFirePolicy("\"FIRE_ONCE_NWO\"");
+    }
+
+    @ParameterizedTest
+    @EnumSource(ScheduleMissedFirePolicy.class)
+    public void testUpdateScheduleWithMissedFirePolicy(ScheduleMissedFirePolicy missedFirePolicy) {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+
+        schedulerService.updateSchedule(
+                user, projectCode, scheduleId, scheduleExpression(missedFirePolicy), WarningType.NONE, 0,
+                FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode);
+
+        Assertions.assertEquals(missedFirePolicy, schedule.getMissedFirePolicy());
+    }
+
+    @Test
+    public void testUpdateSchedulePreservesMissedFirePolicyWhenOmitted() {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        schedule.setMissedFirePolicy(ScheduleMissedFirePolicy.SKIP_MISSED);
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+
+        schedulerService.updateSchedule(
+                user, projectCode, scheduleId, scheduleExpression(null), WarningType.NONE, 0,
+                FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode);
+
+        Assertions.assertEquals(ScheduleMissedFirePolicy.SKIP_MISSED, schedule.getMissedFirePolicy());
+    }
+
+    @Test
+    public void testUpdateScheduleRejectsExplicitNullMissedFirePolicy() {
+        assertUpdateScheduleRejectsInvalidMissedFirePolicy("null");
+    }
+
+    @Test
+    public void testUpdateScheduleRejectsUnknownMissedFirePolicy() {
+        assertUpdateScheduleRejectsInvalidMissedFirePolicy("\"FIRE_ONCE_NWO\"");
+    }
+
+    private void assertInsertScheduleRejectsInvalidMissedFirePolicy(String missedFirePolicyValue) {
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryByWorkflowDefinitionCode(processDefinitionCode)).thenReturn(null);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(this.getProcessDefinition()));
+
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.insertSchedule(
+                        user, projectCode, processDefinitionCode,
+                        scheduleExpressionWithPolicyValue(missedFirePolicyValue),
+                        WarningType.NONE, 0, FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode",
+                        environmentCode));
+
+        Assertions.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR.getCode(),
+                ((ServiceException) exception).getCode());
+        Mockito.verify(scheduleDao, Mockito.never()).insert(Mockito.any());
+    }
+
+    private void assertUpdateScheduleRejectsInvalidMissedFirePolicy(String missedFirePolicyValue) {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        schedule.setMissedFirePolicy(ScheduleMissedFirePolicy.SKIP_MISSED);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(this.getProcessDefinition()));
+
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.updateSchedule(
+                        user, projectCode, scheduleId, scheduleExpressionWithPolicyValue(missedFirePolicyValue),
+                        WarningType.NONE, 0, FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode",
+                        environmentCode));
+
+        Assertions.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR.getCode(),
+                ((ServiceException) exception).getCode());
+        Assertions.assertEquals(ScheduleMissedFirePolicy.SKIP_MISSED, schedule.getMissedFirePolicy());
+        Mockito.verify(scheduleDao, Mockito.never()).updateById(Mockito.any());
+    }
+
+    private String scheduleExpression(ScheduleMissedFirePolicy missedFirePolicy) {
+        String policy = missedFirePolicy == null ? "" : ",\"missedFirePolicy\":\"" + missedFirePolicy.name() + "\"";
+        return scheduleExpressionWithPolicy(policy);
+    }
+
+    private String scheduleExpressionWithPolicyValue(String missedFirePolicyValue) {
+        return scheduleExpressionWithPolicy(",\"missedFirePolicy\":" + missedFirePolicyValue);
+    }
+
+    private String scheduleExpressionWithPolicy(String policy) {
+        return "{\"startTime\":\"2019-12-16 00:00:00\",\"endTime\":\"2019-12-17 00:00:00\","
+                + "\"crontab\":\"0 0 6 * * ? *\",\"timezoneId\":\"Asia/Shanghai\"" + policy + "}";
+    }
+
+    @Test
+    public void testDeleteSchedules() {
+        Schedule schedule = this.getSchedule();
+
+        // error schedule not exists
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.SCHEDULE_NOT_EXISTS.getCode(), ((ServiceException) exception).getCode());
+
+        // error schedule already online
+        schedule.setReleaseState(ReleaseState.ONLINE);
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.SCHEDULE_STATE_ONLINE.getCode(), ((ServiceException) exception).getCode());
         schedule.setReleaseState(ReleaseState.OFFLINE);
 
-        List<Server> masterServers = new ArrayList<>();
-        masterServers.add(new Server());
+        // error user not own schedule
+        int notOwnUserId = 2;
+        schedule.setUserId(notOwnUserId);
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.USER_NO_OPERATION_PERM.getMsg(), exception.getMessage());
+        schedule.setUserId(userId);
 
-        Mockito.when(scheduleMapper.selectById(1)).thenReturn(schedule);
+        // error process definition not exists
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.WORKFLOW_DEFINITION_NOT_EXIST.getCode(),
+                ((ServiceException) exception).getCode());
 
-        Mockito.when(projectMapper.queryByName(projectName)).thenReturn(project);
+        // error project permissions
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(this.getProcessDefinition()));
+        Project project = this.getProject();
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.doThrow(new ServiceException(Status.USER_NO_WRITE_PROJECT_PERM)).when(projectService)
+                .checkHasProjectWritePermissionThrowException(user, project);
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.USER_NO_WRITE_PROJECT_PERM.getCode(),
+                ((ServiceException) exception).getCode());
 
-        Mockito.when(processService.findProcessDefineById(1)).thenReturn(processDefinition);
+        // error delete mapper
+        Mockito.doNothing().when(projectService).checkHasProjectWritePermissionThrowException(user, project);
+        Mockito.when(scheduleDao.deleteById(scheduleId)).thenReturn(false);
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.deleteSchedulesById(user, scheduleId));
+        Assertions.assertEquals(Status.DELETE_SCHEDULE_BY_ID_ERROR.getCode(), ((ServiceException) exception).getCode());
 
-        //hash no auth
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.ONLINE);
-
-        Mockito.when(projectService.hasProjectAndPerm(loginUser, project, result)).thenReturn(true);
-        //schedule not exists
-        result = schedulerService.setScheduleState(loginUser, projectName, 2, ReleaseState.ONLINE);
-        Assert.assertEquals(Status.SCHEDULE_CRON_NOT_EXISTS, result.get(Constants.STATUS));
-
-        //SCHEDULE_CRON_REALEASE_NEED_NOT_CHANGE
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.OFFLINE);
-        Assert.assertEquals(Status.SCHEDULE_CRON_REALEASE_NEED_NOT_CHANGE, result.get(Constants.STATUS));
-
-        //PROCESS_DEFINE_NOT_EXIST
-        schedule.setProcessDefinitionId(2);
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.ONLINE);
-        Assert.assertEquals(Status.PROCESS_DEFINE_NOT_EXIST, result.get(Constants.STATUS));
-        schedule.setProcessDefinitionId(1);
-
-        // PROCESS_DEFINE_NOT_RELEASE
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.ONLINE);
-        Assert.assertEquals(Status.PROCESS_DEFINE_NOT_RELEASE, result.get(Constants.STATUS));
-
-        processDefinition.setReleaseState(ReleaseState.ONLINE);
-        Mockito.when(processService.findProcessDefineById(1)).thenReturn(processDefinition);
-
-        //MASTER_NOT_EXISTS
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.ONLINE);
-        Assert.assertEquals(Status.MASTER_NOT_EXISTS, result.get(Constants.STATUS));
-
-        //set master
-        Mockito.when(monitorService.getServerListFromZK(true)).thenReturn(masterServers);
-
-        //SUCCESS
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.ONLINE);
-        Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
-
-        //OFFLINE
-        Mockito.when(quartzExecutors.deleteJob(null, null)).thenReturn(true);
-        result = schedulerService.setScheduleState(loginUser, projectName, 1, ReleaseState.OFFLINE);
-        Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
-
+        // success
+        Mockito.when(scheduleDao.deleteById(scheduleId)).thenReturn(true);
+        Assertions.assertDoesNotThrow(() -> schedulerService.deleteSchedulesById(user, scheduleId));
     }
 
     @Test
-    public void testDeleteSchedule() {
+    public void testInsertScheduleWorkflowNotExists() {
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.empty());
 
-        Mockito.when(quartzExecutors.deleteJob("1", "1")).thenReturn(true);
-        Mockito.when(quartzExecutors.buildJobGroupName(1)).thenReturn("1");
-        Mockito.when(quartzExecutors.buildJobName(1)).thenReturn("1");
-        boolean flag = true;
-        try {
-            schedulerService.deleteSchedule(1, 1);
-        } catch (Exception e) {
-            flag = false;
-        }
-        Assert.assertTrue(flag);
-
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.insertSchedule(
+                        user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                        FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode));
+        Assertions.assertEquals(Status.WORKFLOW_DEFINITION_NOT_EXIST.getCode(),
+                ((ServiceException) exception).getCode());
     }
 
-    private Project getProject(String name) {
+    @Test
+    public void testInsertScheduleWorkflowFromAnotherProject() {
+        Project project = this.getProject();
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setProjectCode(999L);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
 
+        exception = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.insertSchedule(
+                        user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                        FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode));
+        Assertions.assertEquals(Status.WORKFLOW_DEFINITION_NOT_EXIST.getCode(),
+                ((ServiceException) exception).getCode());
+    }
+
+    @Test
+    public void testInsertScheduleOfflineWorkflow() {
+        Project project = this.getProject();
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setReleaseState(ReleaseState.OFFLINE);
+        Schedule insertedSchedule = new Schedule();
+        insertedSchedule.setId(scheduleId);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.when(scheduleDao.queryByWorkflowDefinitionCode(processDefinitionCode)).thenReturn(null);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+        Mockito.when(scheduleDao.queryById(Mockito.any())).thenReturn(insertedSchedule);
+
+        Schedule result = schedulerService.insertSchedule(
+                user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode);
+
+        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
+        Mockito.verify(scheduleDao).insert(scheduleCaptor.capture());
+        Assertions.assertSame(insertedSchedule, result);
+        Assertions.assertEquals(ReleaseState.OFFLINE, scheduleCaptor.getValue().getReleaseState());
+        Mockito.verifyNoInteractions(schedulerApi);
+    }
+
+    @Test
+    public void testOnlineSchedulerRejectsOfflineWorkflow() {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setReleaseState(ReleaseState.OFFLINE);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+
+        ServiceException ex = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.onlineScheduler(user, projectCode, scheduleId));
+        Assertions.assertEquals(Status.WORKFLOW_DEFINITION_NOT_RELEASE.getCode(), ex.getCode());
+        Mockito.verify(scheduleDao, Mockito.never()).updateById(Mockito.any());
+        Mockito.verifyNoInteractions(schedulerApi);
+    }
+
+    @Test
+    public void testOnlineSchedulerRejectsOfflineSubWorkflow() {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setReleaseState(ReleaseState.ONLINE);
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(this.getProject());
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+        Mockito.when(executorService.checkSubWorkflowDefinitionValid(workflowDefinition)).thenReturn(false);
+
+        ServiceException ex = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.onlineScheduler(user, projectCode, scheduleId));
+        Assertions.assertEquals(Status.SUB_WORKFLOW_DEFINITION_NOT_RELEASE.getCode(), ex.getCode());
+        Assertions.assertEquals(ReleaseState.OFFLINE, schedule.getReleaseState());
+        Mockito.verify(scheduleDao, Mockito.never()).updateById(Mockito.any());
+        Mockito.verifyNoInteractions(schedulerApi);
+    }
+
+    @Test
+    public void testOnlineSchedulerSucceedsWhenSubWorkflowOnline() {
+        Schedule schedule = this.getSchedule();
+        schedule.setReleaseState(ReleaseState.OFFLINE);
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setReleaseState(ReleaseState.ONLINE);
+        Project project = this.getProject();
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+        Mockito.when(executorService.checkSubWorkflowDefinitionValid(workflowDefinition)).thenReturn(true);
+
+        schedulerService.onlineScheduler(user, projectCode, scheduleId);
+
+        Assertions.assertEquals(ReleaseState.ONLINE, schedule.getReleaseState());
+        Mockito.verify(scheduleDao).updateById(schedule);
+        Mockito.verify(schedulerApi).insertOrUpdateScheduleTask(project.getId(), schedule);
+    }
+
+    @Test
+    public void testReadOnlyUserCannotChangeSchedule() {
+        Project project = this.getProject();
+        Mockito.when(projectDao.queryByCode(projectCode)).thenReturn(project);
+        Mockito.doThrow(new ServiceException(Status.USER_NO_WRITE_PROJECT_PERM)).when(projectService)
+                .checkHasProjectWritePermissionThrowException(user, project);
+        Mockito.doThrow(new ServiceException(Status.USER_NO_WRITE_PROJECT_PERM)).when(projectService)
+                .checkHasProjectWritePermissionThrowException(user, projectCode);
+
+        Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.insertSchedule(
+                        user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                        FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode));
+        Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.updateSchedule(
+                        user, projectCode, scheduleId, scheduleExpression(null), WarningType.NONE, 0,
+                        FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode));
+        Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.updateScheduleByWorkflowDefinitionCode(
+                        user, projectCode, processDefinitionCode, scheduleExpression(null), WarningType.NONE, 0,
+                        FailureStrategy.CONTINUE, Priority.MEDIUM, "default", "tenantCode", environmentCode));
+        Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.onlineScheduler(user, projectCode, scheduleId));
+        Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.offlineScheduler(user, projectCode, scheduleId));
+
+        Mockito.verify(scheduleDao, Mockito.never()).insert(Mockito.any());
+        Mockito.verify(scheduleDao, Mockito.never()).updateById(Mockito.any());
+    }
+
+    @Test
+    public void testProjectCodeCannotAuthorizeScheduleFromAnotherProject() {
+        Schedule schedule = this.getSchedule();
+        WorkflowDefinition workflowDefinition = this.getProcessDefinition();
+        workflowDefinition.setProjectCode(2L);
+        Mockito.when(scheduleDao.queryById(scheduleId)).thenReturn(schedule);
+        Mockito.when(workflowDefinitionDao.queryByCode(processDefinitionCode))
+                .thenReturn(Optional.of(workflowDefinition));
+
+        ServiceException onlineEx = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.onlineScheduler(user, projectCode, scheduleId));
+        ServiceException offlineEx = Assertions.assertThrows(ServiceException.class,
+                () -> schedulerService.offlineScheduler(user, projectCode, scheduleId));
+
+        Assertions.assertEquals(Status.SCHEDULE_NOT_EXISTS.getCode(), onlineEx.getCode());
+        Assertions.assertEquals(Status.SCHEDULE_NOT_EXISTS.getCode(), offlineEx.getCode());
+        Mockito.verify(scheduleDao, Mockito.never()).updateById(Mockito.any());
+        Mockito.verifyNoInteractions(schedulerApi);
+    }
+
+    private Project getProject() {
         Project project = new Project();
-        project.setName(name);
-        project.setUserId(1);
-
+        project.setId(1);
+        project.setName(projectName);
+        project.setCode(projectCode);
+        project.setUserId(userId);
         return project;
+    }
+
+    private WorkflowDefinition getProcessDefinition() {
+        WorkflowDefinition workflowDefinition = new WorkflowDefinition();
+        workflowDefinition.setName(processDefinitionName);
+        workflowDefinition.setCode(processDefinitionCode);
+        workflowDefinition.setProjectCode(projectCode);
+        workflowDefinition.setVersion(processDefinitionVersion);
+        workflowDefinition.setUserId(userId);
+        return workflowDefinition;
+    }
+
+    private Schedule getSchedule() {
+        Schedule schedule = new Schedule();
+        schedule.setId(scheduleId);
+        schedule.setWorkflowDefinitionCode(processDefinitionCode);
+        schedule.setEnvironmentCode(environmentCode);
+        schedule.setUserId(userId);
+        return schedule;
     }
 
 }

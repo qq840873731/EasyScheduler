@@ -1,0 +1,70 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.dolphinscheduler.server.master.cluster;
+
+import org.apache.dolphinscheduler.common.enums.ServerStatus;
+import org.apache.dolphinscheduler.common.model.ServerIdentity;
+import org.apache.dolphinscheduler.extract.base.utils.Host;
+
+import lombok.Data;
+import lombok.ToString;
+import lombok.experimental.SuperBuilder;
+
+@Data
+@ToString
+@SuperBuilder
+public abstract class BaseServerMetadata implements IClusters.IServerMetadata {
+
+    private final int processId;
+
+    // The server startup time in milliseconds.
+    private final long serverStartupTime;
+
+    private final String address;
+
+    private final double cpuUsage;
+
+    private final double memoryUsage;
+
+    private final ServerStatus serverStatus;
+
+    // Local time in milliseconds when the heartbeat was received.
+    private final long heartbeatReceivedTime;
+
+    @Override
+    public ServerIdentity getServerIdentity() {
+        Host host = Host.of(address);
+        ServerIdentity identity = new ServerIdentity();
+        identity.setHost(host.getIp());
+        identity.setPort(host.getPort());
+        identity.setProcessId(processId);
+        identity.setStartupTime(serverStartupTime);
+        return identity;
+    }
+
+    @Override
+    public String getAddress() {
+        return address;
+    }
+
+    @Override
+    public ServerStatus getServerStatus() {
+        return serverStatus;
+    }
+
+}

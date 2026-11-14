@@ -14,48 +14,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.api.dto.gantt;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
-
-import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedList;
 import java.util.List;
 
-/**
- * Task
- */
+import lombok.Data;
+
+@Data
 public class Task {
-    /**
-     * task name
-     */
+
     private String taskName;
 
     /**
      * task start date
      */
-    private List<Long> startDate = new ArrayList<>();
+    private List<Long> startDate = new LinkedList<>();
     /**
      * task end date
      */
-    private List<Long> endDate = new ArrayList<>();
+    private List<Long> endDate = new LinkedList<>();
 
     /**
      * task execution date
      */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
     private Date executionDate;
 
     /**
      * task iso start
      */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
     private Date isoStart;
 
     /**
      * task iso end
      */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
     private Date isoEnd;
 
     /**
@@ -68,67 +62,4 @@ public class Task {
      */
     private String duration;
 
-    public String getTaskName() {
-        return taskName;
-    }
-
-    public void setTaskName(String taskName) {
-        this.taskName = taskName;
-    }
-
-    public List<Long> getStartDate() {
-        return startDate;
-    }
-
-    public void setStartDate(List<Long> startDate) {
-        this.startDate = startDate;
-    }
-
-    public List<Long> getEndDate() {
-        return endDate;
-    }
-
-    public void setEndDate(List<Long> endDate) {
-        this.endDate = endDate;
-    }
-
-    public Date getExecutionDate() {
-        return executionDate;
-    }
-
-    public void setExecutionDate(Date executionDate) {
-        this.executionDate = executionDate;
-    }
-
-    public Date getIsoStart() {
-        return isoStart;
-    }
-
-    public void setIsoStart(Date isoStart) {
-        this.isoStart = isoStart;
-    }
-
-    public Date getIsoEnd() {
-        return isoEnd;
-    }
-
-    public void setIsoEnd(Date isoEnd) {
-        this.isoEnd = isoEnd;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public String getDuration() {
-        return duration;
-    }
-
-    public void setDuration(String duration) {
-        this.duration = duration;
-    }
 }

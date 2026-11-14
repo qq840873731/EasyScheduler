@@ -17,42 +17,72 @@
 
 package org.apache.dolphinscheduler.api.service.impl;
 
-import static org.apache.dolphinscheduler.common.utils.Preconditions.checkNotNull;
-
 import org.apache.dolphinscheduler.api.enums.Status;
+import org.apache.dolphinscheduler.api.exceptions.ServiceException;
 import org.apache.dolphinscheduler.api.service.MonitorService;
-import org.apache.dolphinscheduler.api.utils.ZookeeperMonitor;
-import org.apache.dolphinscheduler.common.Constants;
-import org.apache.dolphinscheduler.common.enums.ZKNodeType;
+import org.apache.dolphinscheduler.common.enums.UserType;
+import org.apache.dolphinscheduler.common.model.BaseHeartBeat;
 import org.apache.dolphinscheduler.common.model.Server;
-import org.apache.dolphinscheduler.common.model.WorkerServerModel;
-import org.apache.dolphinscheduler.dao.MonitorDBDao;
-import org.apache.dolphinscheduler.dao.entity.MonitorRecord;
+import org.apache.dolphinscheduler.common.thread.ThreadUtils;
+import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.dao.entity.User;
-import org.apache.dolphinscheduler.dao.entity.ZookeeperRecord;
+import org.apache.dolphinscheduler.dao.plugin.api.monitor.DatabaseMetrics;
+import org.apache.dolphinscheduler.dao.plugin.api.monitor.DatabaseMonitor;
+import org.apache.dolphinscheduler.extract.alert.IAlertMetadataService;
+import org.apache.dolphinscheduler.extract.base.client.Clients;
+import org.apache.dolphinscheduler.extract.master.IMasterMetadataService;
+import org.apache.dolphinscheduler.extract.master.IWorkflowExecutorQueryClient;
+import org.apache.dolphinscheduler.extract.master.dto.WorkflowExecutorDTO;
+import org.apache.dolphinscheduler.extract.master.transportor.WorkflowExecutorQueryRequest;
+import org.apache.dolphinscheduler.extract.master.transportor.WorkflowExecutorQueryResponse;
+import org.apache.dolphinscheduler.extract.worker.ITaskExecutorQueryClient;
+import org.apache.dolphinscheduler.extract.worker.IWorkerMetadataService;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskExecutorQueryRequest;
+import org.apache.dolphinscheduler.extract.worker.transportor.TaskExecutorQueryResponse;
+import org.apache.dolphinscheduler.registry.api.RegistryClient;
+import org.apache.dolphinscheduler.registry.api.enums.RegistryNodeType;
+import org.apache.dolphinscheduler.task.executor.dto.TaskExecutorDTO;
 
+import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import javax.annotation.PreDestroy;
+
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import com.google.common.collect.Sets;
+import com.google.common.collect.Lists;
 
-/**
- * monitor service impl
- */
 @Service
-public class MonitorServiceImpl extends BaseServiceImpl implements MonitorService {
+@Slf4j
+public class MonitorServiceImpl extends BaseServiceImpl implements MonitorService, AutoCloseable {
+
+    private static final int HEARTBEAT_QUERY_CONCURRENCY = 8;
+    private static final long HEARTBEAT_QUERY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(5);
 
     @Autowired
-    private ZookeeperMonitor zookeeperMonitor;
+    private DatabaseMonitor databaseMonitor;
 
     @Autowired
-    private MonitorDBDao monitorDBDao;
+    private RegistryClient registryClient;
+
+    private final ThreadPoolExecutor heartbeatQueryExecutor = new ThreadPoolExecutor(
+            HEARTBEAT_QUERY_CONCURRENCY, HEARTBEAT_QUERY_CONCURRENCY, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(64), ThreadUtils.newDaemonThreadFactory("ApiHeartbeatQuery-%d"),
+            new ThreadPoolExecutor.AbortPolicy());
 
     /**
      * query database state
@@ -61,105 +91,140 @@ public class MonitorServiceImpl extends BaseServiceImpl implements MonitorServic
      * @return data base state
      */
     @Override
-    public Map<String,Object> queryDatabaseState(User loginUser) {
-        Map<String, Object> result = new HashMap<>();
-
-        List<MonitorRecord> monitorRecordList = monitorDBDao.queryDatabaseState();
-
-        result.put(Constants.DATA_LIST, monitorRecordList);
-        putMsg(result, Status.SUCCESS);
-
-        return result;
-
+    public List<DatabaseMetrics> queryDatabaseState(User loginUser) {
+        return Lists.newArrayList(databaseMonitor.getDatabaseMetrics());
     }
 
-    /**
-     * query master list
-     *
-     * @param loginUser login user
-     * @return master information list
-     */
     @Override
-    public Map<String,Object> queryMaster(User loginUser) {
+    public List<Server> listServer(RegistryNodeType nodeType) {
+        List<Server> servers = registryClient.getServerList(nodeType);
+        if (nodeType != RegistryNodeType.MASTER && nodeType != RegistryNodeType.WORKER
+                && nodeType != RegistryNodeType.ALERT_SERVER) {
+            return servers;
+        }
+        long deadline = System.nanoTime() + HEARTBEAT_QUERY_TIMEOUT_NANOS;
+        servers.forEach(server -> {
+            server.setHeartBeatInfo(null);
+            server.setLastHeartbeatTime(null);
+            server.setMetadataStale(true);
+        });
+        Iterator<Server> pending = servers.iterator();
+        Map<FutureTask<BaseHeartBeat>, Server> queries = new HashMap<>();
+        BlockingQueue<FutureTask<BaseHeartBeat>> completed = new ArrayBlockingQueue<>(HEARTBEAT_QUERY_CONCURRENCY);
+        try {
+            while (pending.hasNext() || !queries.isEmpty()) {
+                while (pending.hasNext() && queries.size() < HEARTBEAT_QUERY_CONCURRENCY
+                        && deadline - System.nanoTime() > 0) {
+                    Server server = pending.next();
+                    FutureTask<BaseHeartBeat> query = new FutureTask<BaseHeartBeat>(
+                            () -> deadline - System.nanoTime() <= 0 ? null : queryHeartbeat(nodeType, server)) {
 
-        Map<String, Object> result = new HashMap<>();
-
-        List<Server> masterServers = getServerListFromZK(true);
-        result.put(Constants.DATA_LIST, masterServers);
-        putMsg(result,Status.SUCCESS);
-
-        return result;
-    }
-
-    /**
-     * query zookeeper state
-     *
-     * @param loginUser login user
-     * @return zookeeper information list
-     */
-    @Override
-    public Map<String,Object> queryZookeeperState(User loginUser) {
-        Map<String, Object> result = new HashMap<>();
-
-        List<ZookeeperRecord> zookeeperRecordList = zookeeperMonitor.zookeeperInfoList();
-
-        result.put(Constants.DATA_LIST, zookeeperRecordList);
-        putMsg(result, Status.SUCCESS);
-
-        return result;
-
-    }
-
-    /**
-     * query worker list
-     *
-     * @param loginUser login user
-     * @return worker information list
-     */
-    @Override
-    public Map<String,Object> queryWorker(User loginUser) {
-
-        Map<String, Object> result = new HashMap<>();
-        List<WorkerServerModel> workerServers = getServerListFromZK(false)
-                .stream()
-                .map((Server server) -> {
-                    WorkerServerModel model = new WorkerServerModel();
-                    model.setId(server.getId());
-                    model.setHost(server.getHost());
-                    model.setPort(server.getPort());
-                    model.setZkDirectories(Sets.newHashSet(server.getZkDirectory()));
-                    model.setResInfo(server.getResInfo());
-                    model.setCreateTime(server.getCreateTime());
-                    model.setLastHeartbeatTime(server.getLastHeartbeatTime());
-                    return model;
-                })
-                .collect(Collectors.toList());
-
-        Map<String, WorkerServerModel> workerHostPortServerMapping = workerServers
-                .stream()
-                .collect(Collectors.toMap(
-                    (WorkerServerModel worker) -> {
-                        String[] s = worker.getZkDirectories().iterator().next().split("/");
-                        return s[s.length - 1];
+                        @Override
+                        protected void done() {
+                            completed.add(this);
+                        }
+                    };
+                    queries.put(query, server);
+                    try {
+                        heartbeatQueryExecutor.execute(query);
+                    } catch (RejectedExecutionException ex) {
+                        query.cancel(false);
+                        log.debug("Heartbeat query capacity exceeded for {}:{}", server.getHost(), server.getPort());
                     }
-                    , Function.identity()
-                    , (WorkerServerModel oldOne, WorkerServerModel newOne) -> {
-                        oldOne.getZkDirectories().addAll(newOne.getZkDirectories());
-                        return oldOne;
-                    }));
+                }
+                if (queries.isEmpty()) {
+                    break;
+                }
+                FutureTask<BaseHeartBeat> query = completed.poll(Math.max(0, deadline - System.nanoTime()),
+                        TimeUnit.NANOSECONDS);
+                if (query == null) {
+                    break;
+                }
+                Server server = queries.remove(query);
+                try {
+                    BaseHeartBeat heartbeat = query.get();
+                    if (heartbeat != null) {
+                        server.setHeartBeatInfo(JSONUtils.toJsonString(heartbeat));
+                        server.setLastHeartbeatTime(new Date(heartbeat.getReportTime()));
+                        server.setMetadataStale(false);
+                    }
+                } catch (CancellationException | ExecutionException ex) {
+                    log.debug("Failed to query {} heartbeat from {}:{}", nodeType, server.getHost(), server.getPort(),
+                            ex);
+                }
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } finally {
+            for (FutureTask<BaseHeartBeat> query : queries.keySet()) {
+                // Running RPCs retain their transport timeout; only the request thread updates response data.
+                query.cancel(false);
+                heartbeatQueryExecutor.remove(query);
+            }
+        }
+        return servers;
+    }
 
-        result.put(Constants.DATA_LIST, workerHostPortServerMapping.values());
-        putMsg(result,Status.SUCCESS);
+    private BaseHeartBeat queryHeartbeat(RegistryNodeType type, Server server) {
+        String address = server.getHost() + ":" + server.getPort();
+        BaseHeartBeat heartbeat = fetchHeartbeat(type, address);
+        if (heartbeat == null || heartbeat.getProcessId() != server.getId()
+                || heartbeat.getStartupTime() != server.getCreateTime().getTime()
+                || !address.equals(heartbeat.getHost() + ":" + heartbeat.getPort())) {
+            throw new IllegalStateException("Heartbeat does not match the registered instance");
+        }
+        return heartbeat;
+    }
 
-        return result;
+    BaseHeartBeat fetchHeartbeat(RegistryNodeType type, String address) {
+        switch (type) {
+            case MASTER:
+                return Clients.withService(IMasterMetadataService.class).withHost(address).getServerMetadata();
+            case WORKER:
+                return Clients.withService(IWorkerMetadataService.class).withHost(address).getServerMetadata();
+            case ALERT_SERVER:
+                return Clients.withService(IAlertMetadataService.class).withHost(address).getServerMetadata();
+            default:
+                throw new IllegalArgumentException("Unsupported heartbeat type: " + type);
+        }
     }
 
     @Override
-    public List<Server> getServerListFromZK(boolean isMaster) {
+    @PreDestroy
+    public void close() {
+        // Let queued queries finish so their waiting HTTP requests can complete.
+        heartbeatQueryExecutor.shutdown();
+    }
 
-        checkNotNull(zookeeperMonitor);
-        ZKNodeType zkNodeType = isMaster ? ZKNodeType.MASTER : ZKNodeType.WORKER;
-        return zookeeperMonitor.getServerList(zkNodeType);
+    @Override
+    public List<WorkflowExecutorDTO> queryWorkflowExecutors(User loginUser, String masterAddress) {
+        if (!loginUser.getUserType().equals(UserType.ADMIN_USER)) {
+            throw new ServiceException(Status.NO_CURRENT_OPERATING_PERMISSION);
+        }
+
+        WorkflowExecutorQueryResponse response = Clients
+                .withService(IWorkflowExecutorQueryClient.class)
+                .withHost(masterAddress)
+                .queryWorkflowExecutors(new WorkflowExecutorQueryRequest());
+        if (!response.isSuccess()) {
+            throw new ServiceException(response.getMessage());
+        }
+        return response.getWorkflowExecutors();
+    }
+
+    @Override
+    public List<TaskExecutorDTO> queryTaskExecutors(User loginUser, String serverAddress) {
+        if (!loginUser.getUserType().equals(UserType.ADMIN_USER)) {
+            throw new ServiceException(Status.NO_CURRENT_OPERATING_PERMISSION);
+        }
+        TaskExecutorQueryResponse response = Clients
+                .withService(ITaskExecutorQueryClient.class)
+                .withHost(serverAddress)
+                .queryTaskInstances(new TaskExecutorQueryRequest());
+        if (!response.isSuccess()) {
+            throw new ServiceException(response.getMessage());
+        }
+        return response.getTaskExecutors();
     }
 
 }

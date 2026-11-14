@@ -17,85 +17,81 @@
 
 package org.apache.dolphinscheduler.dao.mapper;
 
-import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-
-import org.apache.dolphinscheduler.common.enums.CommandType;
-import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
 import org.apache.dolphinscheduler.common.enums.Flag;
-import org.apache.dolphinscheduler.common.enums.TaskType;
-import org.apache.dolphinscheduler.dao.entity.ExecuteStatusCount;
-import org.apache.dolphinscheduler.dao.entity.ProcessDefinition;
-import org.apache.dolphinscheduler.dao.entity.ProcessInstance;
+import org.apache.dolphinscheduler.common.enums.TaskExecuteType;
+import org.apache.dolphinscheduler.common.enums.WorkflowExecutionStatus;
+import org.apache.dolphinscheduler.dao.BaseDaoTest;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
+import org.apache.dolphinscheduler.dao.entity.WorkflowDefinition;
+import org.apache.dolphinscheduler.dao.entity.WorkflowInstance;
+import org.apache.dolphinscheduler.dao.model.TaskInstanceStatusCountDto;
+import org.apache.dolphinscheduler.plugin.task.api.enums.TaskExecutionStatus;
 
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.annotation.Rollback;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.transaction.annotation.Transactional;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest
-@Transactional
-@Rollback
-public class TaskInstanceMapperTest {
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.google.common.collect.Lists;
 
+public class TaskInstanceMapperTest extends BaseDaoTest {
 
     @Autowired
-    TaskInstanceMapper taskInstanceMapper;
+    private TaskInstanceMapper taskInstanceMapper;
 
     @Autowired
-    ProcessDefinitionMapper processDefinitionMapper;
+    private WorkflowDefinitionMapper workflowDefinitionMapper;
 
     @Autowired
-    ProcessInstanceMapper processInstanceMapper;
-
-    @Autowired
-    ProcessInstanceMapMapper processInstanceMapMapper;
-
-    private int processInstanceId;
-
-    @Before
-    public void before() {
-        ProcessInstance processInstance = new ProcessInstance();
-        processInstance.setWarningGroupId(0);
-        processInstance.setCommandParam("");
-        processInstanceMapper.insert(processInstance);
-        processInstanceId = processInstance.getId();
-    }
+    private WorkflowInstanceMapper workflowInstanceMapper;
 
     /**
      * insert
      *
      * @return TaskInstance
      */
-    private TaskInstance insertOne() {
-        //insertOne
-        return insertOne("us task", processInstanceId, ExecutionStatus.RUNNING_EXECUTION, TaskType.SHELL.toString(),1);
+    private TaskInstance insertTaskInstance(int processInstanceId) {
+        // insertOne
+        return insertTaskInstance(processInstanceId, "SHELL");
+    }
+
+    /**
+     * insert
+     *
+     * @return ProcessInstance
+     */
+    private WorkflowInstance insertProcessInstance() {
+        WorkflowInstance workflowInstance = new WorkflowInstance();
+        workflowInstance.setId(1);
+        workflowInstance.setName("taskName");
+        workflowInstance.setState(WorkflowExecutionStatus.RUNNING_EXECUTION);
+        workflowInstance.setStartTime(new Date());
+        workflowInstance.setEndTime(new Date());
+        workflowInstance.setWorkflowDefinitionCode(1L);
+        workflowInstance.setProjectCode(1L);
+        workflowInstanceMapper.insert(workflowInstance);
+        return workflowInstance;
     }
 
     /**
      * construct a task instance and then insert
      */
-    private TaskInstance insertOne(String taskName, int processInstanceId, ExecutionStatus state, String taskType,int processDefinitionId) {
+    private TaskInstance insertTaskInstance(int processInstanceId, String taskType) {
         TaskInstance taskInstance = new TaskInstance();
         taskInstance.setFlag(Flag.YES);
-        taskInstance.setName(taskName);
-        taskInstance.setState(state);
+        taskInstance.setName("us task");
+        taskInstance.setState(TaskExecutionStatus.RUNNING_EXECUTION);
+        taskInstance.setSubmitTime(new Date());
         taskInstance.setStartTime(new Date());
         taskInstance.setEndTime(new Date());
-        taskInstance.setTaskJson("{}");
-        taskInstance.setProcessInstanceId(processInstanceId);
+        taskInstance.setWorkflowInstanceId(processInstanceId);
+        taskInstance.setProjectCode(1L);
         taskInstance.setTaskType(taskType);
-        taskInstance.setProcessDefinitionId(processDefinitionId);
         taskInstanceMapper.insert(taskInstance);
         return taskInstance;
     }
@@ -105,11 +101,14 @@ public class TaskInstanceMapperTest {
      */
     @Test
     public void testUpdate() {
-        //insertOne
-        TaskInstance taskInstance = insertOne();
-        //update
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance taskInstance = insertTaskInstance(workflowInstance.getId());
+        // update
         int update = taskInstanceMapper.updateById(taskInstance);
-        Assert.assertEquals(1, update);
+        Assertions.assertEquals(1, update);
         taskInstanceMapper.deleteById(taskInstance.getId());
     }
 
@@ -118,9 +117,14 @@ public class TaskInstanceMapperTest {
      */
     @Test
     public void testDelete() {
-        TaskInstance taskInstance = insertOne();
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance taskInstance = insertTaskInstance(workflowInstance.getId());
+
         int delete = taskInstanceMapper.deleteById(taskInstance.getId());
-        Assert.assertEquals(1, delete);
+        Assertions.assertEquals(1, delete);
     }
 
     /**
@@ -128,157 +132,148 @@ public class TaskInstanceMapperTest {
      */
     @Test
     public void testQuery() {
-        TaskInstance taskInstance = insertOne();
-        //query
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance taskInstance = insertTaskInstance(workflowInstance.getId());
+        // query
         List<TaskInstance> taskInstances = taskInstanceMapper.selectList(null);
         taskInstanceMapper.deleteById(taskInstance.getId());
-        Assert.assertNotEquals(taskInstances.size(), 0);
-    }
-
-    /**
-     * test query task instance by process instance id and state
-     */
-    @Test
-    public void testQueryTaskByProcessIdAndState() {
-        TaskInstance task = insertOne();
-        task.setProcessInstanceId(processInstanceId);
-        taskInstanceMapper.updateById(task);
-        List<Integer> taskInstances = taskInstanceMapper.queryTaskByProcessIdAndState(
-                task.getProcessInstanceId(),
-                ExecutionStatus.RUNNING_EXECUTION.ordinal()
-        );
-        taskInstanceMapper.deleteById(task.getId());
-        Assert.assertNotEquals(taskInstances.size(), 0);
+        Assertions.assertNotEquals(0, taskInstances.size());
     }
 
     /**
      * test find valid task list by process instance id
      */
     @Test
-    public void testFindValidTaskListByProcessId() {
-        TaskInstance task = insertOne();
-        TaskInstance task2 = insertOne();
-        task.setProcessInstanceId(processInstanceId);
-        task2.setProcessInstanceId(processInstanceId);
+    public void testFindValidTaskListByWorkflowInstanceId() {
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance task = insertTaskInstance(workflowInstance.getId());
+        TaskInstance task2 = insertTaskInstance(workflowInstance.getId());
+        task.setWorkflowInstanceId(workflowInstance.getId());
+        task2.setWorkflowInstanceId(workflowInstance.getId());
         taskInstanceMapper.updateById(task);
         taskInstanceMapper.updateById(task2);
 
-        List<TaskInstance> taskInstances = taskInstanceMapper.findValidTaskListByProcessId(
-                task.getProcessInstanceId(),
-                Flag.YES
-        );
+        List<TaskInstance> taskInstances = taskInstanceMapper.findValidTaskListByWorkflowInstanceId(
+                task.getWorkflowInstanceId(),
+                Flag.YES);
 
         task2.setFlag(Flag.NO);
         taskInstanceMapper.updateById(task2);
-        List<TaskInstance> taskInstances1 = taskInstanceMapper.findValidTaskListByProcessId(task.getProcessInstanceId(),
-                Flag.NO);
-
+        List<TaskInstance> taskInstances1 =
+                taskInstanceMapper.findValidTaskListByWorkflowInstanceId(task.getWorkflowInstanceId(),
+                        Flag.NO);
         taskInstanceMapper.deleteById(task2.getId());
         taskInstanceMapper.deleteById(task.getId());
-        Assert.assertNotEquals(taskInstances.size(), 0);
-        Assert.assertNotEquals(taskInstances1.size(), 0);
+        Assertions.assertNotEquals(0, taskInstances.size());
+        Assertions.assertNotEquals(0, taskInstances1.size());
     }
 
     /**
-     * test query by host and status
+     * test query by task instance id and code
      */
     @Test
-    public void testQueryByHostAndStatus() {
-        TaskInstance task = insertOne();
+    public void testQueryByInstanceIdAndCode() {
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance task = insertTaskInstance(workflowInstance.getId());
         task.setHost("111.111.11.11");
         taskInstanceMapper.updateById(task);
 
-        List<TaskInstance> taskInstances = taskInstanceMapper.queryByHostAndStatus(
-                task.getHost(), new int[]{ExecutionStatus.RUNNING_EXECUTION.ordinal()}
-        );
+        TaskInstance taskInstance = taskInstanceMapper.queryByInstanceIdAndCode(
+                task.getWorkflowInstanceId(),
+                task.getTaskCode());
         taskInstanceMapper.deleteById(task.getId());
-        Assert.assertNotEquals(taskInstances.size(), 0);
+        Assertions.assertNotEquals(null, taskInstance);
     }
 
     /**
-     * test set failover by host and state array
+     * test query by process instance ids and task codes
      */
     @Test
-    public void testSetFailoverByHostAndStateArray() {
-        TaskInstance task = insertOne();
+    public void testQueryByWorkflowInstanceIdsAndTaskCodes() {
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
+
+        // insert taskInstance
+        TaskInstance task = insertTaskInstance(workflowInstance.getId());
         task.setHost("111.111.11.11");
         taskInstanceMapper.updateById(task);
 
-        int setResult = taskInstanceMapper.setFailoverByHostAndStateArray(
-                task.getHost(),
-                new int[]{ExecutionStatus.RUNNING_EXECUTION.ordinal()},
-                ExecutionStatus.NEED_FAULT_TOLERANCE
-        );
+        List<TaskInstance> taskInstances = taskInstanceMapper.queryByWorkflowInstanceIdsAndTaskCodes(
+                Collections.singletonList(task.getWorkflowInstanceId()),
+                Collections.singletonList(task.getTaskCode()));
         taskInstanceMapper.deleteById(task.getId());
-        Assert.assertNotEquals(setResult, 0);
-    }
-
-    /**
-     * test query by task instance id and name
-     */
-    @Test
-    public void testQueryByInstanceIdAndName() {
-        TaskInstance task = insertOne();
-        task.setHost("111.111.11.11");
-        taskInstanceMapper.updateById(task);
-
-        TaskInstance taskInstance = taskInstanceMapper.queryByInstanceIdAndName(
-                task.getProcessInstanceId(),
-                task.getName()
-        );
-        taskInstanceMapper.deleteById(task.getId());
-        Assert.assertNotEquals(taskInstance, null);
-    }
-
-    /**
-     * test count task instance
-     */
-    @Test
-    public void testCountTask() {
-        TaskInstance task = insertOne();
-
-        ProcessDefinition definition = new ProcessDefinition();
-        definition.setProjectId(1111);
-        processDefinitionMapper.insert(definition);
-        task.setProcessDefinitionId(definition.getId());
-        taskInstanceMapper.updateById(task);
-
-        int countTask = taskInstanceMapper.countTask(
-                new Integer[0],
-                new int[0]
-        );
-        int countTask2 = taskInstanceMapper.countTask(
-                new Integer[]{definition.getProjectId()},
-                new int[]{task.getId()}
-        );
-        taskInstanceMapper.deleteById(task.getId());
-        processDefinitionMapper.deleteById(definition.getId());
-        Assert.assertNotEquals(countTask, 0);
-        Assert.assertNotEquals(countTask2, 0);
-
-
+        Assertions.assertEquals(1, taskInstances.size());
     }
 
     /**
      * test count task instance state by user
      */
     @Test
-    public void testCountTaskInstanceStateByUser() {
+    public void testcountTaskInstanceStateByProjectCodes() {
 
-        TaskInstance task = insertOne();
-        ProcessDefinition definition = new ProcessDefinition();
-        definition.setProjectId(1111);
-        processDefinitionMapper.insert(definition);
-        task.setProcessDefinitionId(definition.getId());
-        taskInstanceMapper.updateById(task);
+        // insert taskInstance
+        TaskInstance task = insertTaskInstance(1);
 
+        List<TaskInstanceStatusCountDto> taskInstanceStatusCountDtos =
+                taskInstanceMapper.countTaskInstanceStateByProjectCodes(
+                        null,
+                        null,
+                        Lists.newArrayList(task.getProjectCode()));
 
-        List<ExecuteStatusCount> count = taskInstanceMapper.countTaskInstanceStateByUser(
-                null, null,
-                new Integer[]{definition.getProjectId()}
-        );
+        Assertions.assertEquals(1, taskInstanceStatusCountDtos.size());
 
-        processDefinitionMapper.deleteById(definition.getId());
+        taskInstanceMapper.deleteById(task.getId());
+    }
+
+    /**
+     * test that task instances with null start_time but valid submit_time are included in time range filter
+     */
+    @Test
+    public void testCountTaskInstanceStateByProjectCodes_withSubmitTimeFilter() {
+        // insert a task instance with submit_time set but start_time null (e.g. task not yet started)
+        TaskInstance task = new TaskInstance();
+        task.setFlag(Flag.YES);
+        task.setName("submitted task");
+        task.setState(TaskExecutionStatus.SUBMITTED_SUCCESS);
+        task.setStartTime(null);
+        task.setSubmitTime(new Date());
+        task.setWorkflowInstanceId(1);
+        task.setProjectCode(1L);
+        task.setTaskType("SHELL");
+        taskInstanceMapper.insert(task);
+
+        Date filterStart = new Date(System.currentTimeMillis() - 3600_000);
+        Date filterEnd = new Date(System.currentTimeMillis() + 3600_000);
+
+        // should find the task via submit_time filter
+        List<TaskInstanceStatusCountDto> results =
+                taskInstanceMapper.countTaskInstanceStateByProjectCodes(
+                        filterStart,
+                        filterEnd,
+                        Lists.newArrayList(task.getProjectCode()));
+
+        Assertions.assertEquals(1, results.size());
+        Assertions.assertEquals(TaskExecutionStatus.SUBMITTED_SUCCESS, results.get(0).getState());
+
+        // time range before submit_time should return empty
+        Date beforeSubmit = new Date(System.currentTimeMillis() - 7200_000);
+        List<TaskInstanceStatusCountDto> emptyResults =
+                taskInstanceMapper.countTaskInstanceStateByProjectCodes(
+                        beforeSubmit,
+                        filterStart,
+                        Lists.newArrayList(task.getProjectCode()));
+
+        Assertions.assertTrue(emptyResults.isEmpty());
+
         taskInstanceMapper.deleteById(task.getId());
     }
 
@@ -287,39 +282,37 @@ public class TaskInstanceMapperTest {
      */
     @Test
     public void testQueryTaskInstanceListPaging() {
+        WorkflowDefinition definition = new WorkflowDefinition();
+        definition.setCode(1L);
+        definition.setProjectCode(1111L);
+        definition.setCreateTime(new Date());
+        definition.setUpdateTime(new Date());
+        workflowDefinitionMapper.insert(definition);
 
-        ProcessDefinition definition = new ProcessDefinition();
-        definition.setProjectId(1111);
-        processDefinitionMapper.insert(definition);
+        // insert ProcessInstance
+        WorkflowInstance workflowInstance = insertProcessInstance();
 
-        ProcessInstance processInstance = new ProcessInstance();
-        processInstance.setProcessDefinitionId(definition.getId());
-        processInstance.setState(ExecutionStatus.RUNNING_EXECUTION);
-        processInstance.setName("ut process");
-        processInstance.setStartTime(new Date());
-        processInstance.setEndTime(new Date());
-        processInstance.setCommandType(CommandType.START_PROCESS);
-        processInstanceMapper.insert(processInstance);
-
-        TaskInstance task = insertOne("us task", processInstance.getId(), ExecutionStatus.RUNNING_EXECUTION, TaskType.SHELL.toString(),definition.getId());
+        // insert taskInstance
+        TaskInstance task = insertTaskInstance(workflowInstance.getId());
 
         Page<TaskInstance> page = new Page(1, 3);
         IPage<TaskInstance> taskInstanceIPage = taskInstanceMapper.queryTaskInstanceListPaging(
                 page,
-                definition.getProjectId(),
-                task.getProcessInstanceId(),
+                definition.getProjectCode(),
+                task.getWorkflowInstanceId(),
                 "",
                 "",
                 "",
-                0,
+                null,
+                "",
                 new int[0],
                 "",
-                null, null
-        );
-        processInstanceMapper.deleteById(processInstance.getId());
+                TaskExecuteType.BATCH,
+                null, null);
+        workflowInstanceMapper.deleteById(workflowInstance.getId());
         taskInstanceMapper.deleteById(task.getId());
-        processDefinitionMapper.deleteById(definition.getId());
-        Assert.assertNotEquals(taskInstanceIPage.getTotal(), 0);
+        workflowDefinitionMapper.deleteById(definition.getId());
+        Assertions.assertEquals(0, taskInstanceIPage.getTotal());
 
     }
 }

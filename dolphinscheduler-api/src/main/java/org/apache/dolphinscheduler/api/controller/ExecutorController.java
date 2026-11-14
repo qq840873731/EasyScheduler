@@ -17,17 +17,28 @@
 
 package org.apache.dolphinscheduler.api.controller;
 
-import static org.apache.dolphinscheduler.api.enums.Status.CHECK_PROCESS_DEFINITION_ERROR;
-import static org.apache.dolphinscheduler.api.enums.Status.EXECUTE_PROCESS_INSTANCE_ERROR;
-import static org.apache.dolphinscheduler.api.enums.Status.START_PROCESS_INSTANCE_ERROR;
+import static org.apache.dolphinscheduler.api.enums.Status.BATCH_EXECUTE_WORKFLOW_INSTANCE_ERROR;
+import static org.apache.dolphinscheduler.api.enums.Status.BATCH_START_WORKFLOW_INSTANCE_ERROR;
+import static org.apache.dolphinscheduler.api.enums.Status.EXECUTE_WORKFLOW_INSTANCE_ERROR;
+import static org.apache.dolphinscheduler.api.enums.Status.START_TASK_INSTANCE_ERROR;
+import static org.apache.dolphinscheduler.api.enums.Status.START_WORKFLOW_INSTANCE_ERROR;
 
+import org.apache.dolphinscheduler.api.audit.OperatorLog;
+import org.apache.dolphinscheduler.api.audit.enums.AuditType;
+import org.apache.dolphinscheduler.api.dto.workflow.WorkflowBackFillRequest;
+import org.apache.dolphinscheduler.api.dto.workflow.WorkflowTriggerRequest;
 import org.apache.dolphinscheduler.api.enums.ExecuteType;
 import org.apache.dolphinscheduler.api.exceptions.ApiException;
+import org.apache.dolphinscheduler.api.exceptions.ServiceException;
 import org.apache.dolphinscheduler.api.service.ExecutorService;
 import org.apache.dolphinscheduler.api.utils.Result;
-import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.api.utils.WorkflowUtils;
+import org.apache.dolphinscheduler.common.constants.Constants;
 import org.apache.dolphinscheduler.common.enums.CommandType;
+import org.apache.dolphinscheduler.common.enums.ComplementDependentMode;
+import org.apache.dolphinscheduler.common.enums.ExecutionOrder;
 import org.apache.dolphinscheduler.common.enums.FailureStrategy;
+import org.apache.dolphinscheduler.common.enums.Flag;
 import org.apache.dolphinscheduler.common.enums.Priority;
 import org.apache.dolphinscheduler.common.enums.RunMode;
 import org.apache.dolphinscheduler.common.enums.TaskDependType;
@@ -35,10 +46,14 @@ import org.apache.dolphinscheduler.common.enums.WarningType;
 import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.dao.entity.User;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,145 +64,380 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiImplicitParam;
-import io.swagger.annotations.ApiImplicitParams;
-import io.swagger.annotations.ApiOperation;
-import io.swagger.annotations.ApiParam;
-import springfox.documentation.annotations.ApiIgnore;
+import com.google.common.collect.Lists;
 
-/**
- * executor controller
- */
-@Api(tags = "EXECUTOR_TAG")
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Parameters;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "EXECUTOR_TAG")
 @RestController
-@RequestMapping("projects/{projectName}/executors")
+@RequestMapping("projects/{projectCode}/executors")
+@Slf4j
 public class ExecutorController extends BaseController {
-
-    private static final Logger logger = LoggerFactory.getLogger(ExecutorController.class);
 
     @Autowired
     private ExecutorService execService;
 
     /**
-     * execute process instance
+     * execute workflow instance
      *
-     * @param loginUser login user
-     * @param projectName project name
-     * @param processDefinitionId process definition id
-     * @param scheduleTime schedule time
-     * @param failureStrategy failure strategy
-     * @param startNodeList start nodes list
-     * @param taskDependType task depend type
-     * @param execType execute type
-     * @param warningType warning type
-     * @param warningGroupId warning group id
-     * @param runMode run mode
-     * @param processInstancePriority process instance priority
-     * @param workerGroup worker group
-     * @param timeout timeout
-     * @return start process result code
+     * @param loginUser                 login user
+     * @param workflowDefinitionCode     workflow definition code
+     * @param scheduleTime              schedule time when CommandType is COMPLEMENT_DATA  there are two ways to transfer parameters 1.date range, for example:{"complementStartDate":"2022-01-01 12:12:12","complementEndDate":"2022-01-6 12:12:12"} 2.manual input,  for example:{"complementScheduleDateList":"2022-01-01 00:00:00,2022-01-02 12:12:12,2022-01-03 12:12:12"}
+     * @param failureStrategy           failure strategy
+     * @param startNodeList             start nodes list
+     * @param taskDependType            task depend type
+     * @param execType                  execute type
+     * @param warningType               warning type
+     * @param warningGroupId            warning group id
+     * @param runMode                   run mode
+     * @param workflowInstancePriority   workflow instance priority
+     * @param workerGroup               worker group
+     * @param expectedParallelismNumber the expected parallelism number when execute complement in parallel mode
+     * @param executionOrder            complement data in some kind of order
+     * @return start workflow result code
      */
-    @ApiOperation(value = "startProcessInstance", notes = "RUN_PROCESS_INSTANCE_NOTES")
-    @ApiImplicitParams({
-            @ApiImplicitParam(name = "processDefinitionId", value = "PROCESS_DEFINITION_ID", required = true, dataType = "Int", example = "100"),
-            @ApiImplicitParam(name = "scheduleTime", value = "SCHEDULE_TIME", required = true, dataType = "String"),
-            @ApiImplicitParam(name = "failureStrategy", value = "FAILURE_STRATEGY", required = true, dataType = "FailureStrategy"),
-            @ApiImplicitParam(name = "startNodeList", value = "START_NODE_LIST", dataType = "String"),
-            @ApiImplicitParam(name = "taskDependType", value = "TASK_DEPEND_TYPE", dataType = "TaskDependType"),
-            @ApiImplicitParam(name = "execType", value = "COMMAND_TYPE", dataType = "CommandType"),
-            @ApiImplicitParam(name = "warningType", value = "WARNING_TYPE", required = true, dataType = "WarningType"),
-            @ApiImplicitParam(name = "warningGroupId", value = "WARNING_GROUP_ID", required = true, dataType = "Int", example = "100"),
-            @ApiImplicitParam(name = "runMode", value = "RUN_MODE", dataType = "RunMode"),
-            @ApiImplicitParam(name = "processInstancePriority", value = "PROCESS_INSTANCE_PRIORITY", required = true, dataType = "Priority"),
-            @ApiImplicitParam(name = "workerGroup", value = "WORKER_GROUP", dataType = "String", example = "default"),
-            @ApiImplicitParam(name = "timeout", value = "TIMEOUT", dataType = "Int", example = "100"),
+    @Operation(summary = "startWorkflowInstance", description = "RUN_WORKFLOW_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "workflowDefinitionCode", description = "WORKFLOW_DEFINITION_CODE", required = true, schema = @Schema(implementation = Long.class), example = "100"),
+            @Parameter(name = "scheduleTime", description = "SCHEDULE_TIME", required = true, schema = @Schema(implementation = String.class), example = "2022-04-06 00:00:00,2022-04-06 00:00:00"),
+            @Parameter(name = "failureStrategy", description = "FAILURE_STRATEGY", required = true, schema = @Schema(implementation = FailureStrategy.class)),
+            @Parameter(name = "startNodeList", description = "START_NODE_LIST", schema = @Schema(implementation = String.class)),
+            @Parameter(name = "taskDependType", description = "TASK_DEPEND_TYPE", schema = @Schema(implementation = TaskDependType.class)),
+            @Parameter(name = "execType", description = "COMMAND_TYPE", schema = @Schema(implementation = CommandType.class)),
+            @Parameter(name = "warningType", description = "WARNING_TYPE", required = true, schema = @Schema(implementation = WarningType.class)),
+            @Parameter(name = "warningGroupId", description = "WARNING_GROUP_ID", schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "runMode", description = "RUN_MODE", schema = @Schema(implementation = RunMode.class)),
+            @Parameter(name = "workflowInstancePriority", description = "WORKFLOW_INSTANCE_PRIORITY", required = true, schema = @Schema(implementation = Priority.class)),
+            @Parameter(name = "workerGroup", description = "WORKER_GROUP", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "tenantCode", description = "TENANT_CODE", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "environmentCode", description = "ENVIRONMENT_CODE", schema = @Schema(implementation = Long.class, example = "-1")),
+            @Parameter(name = "timeout", description = "TIMEOUT", schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "expectedParallelismNumber", description = "EXPECTED_PARALLELISM_NUMBER", schema = @Schema(implementation = int.class, example = "8")),
+            @Parameter(name = "dryRun", description = "DRY_RUN", schema = @Schema(implementation = int.class, example = "0")),
+            @Parameter(name = "complementDependentMode", description = "COMPLEMENT_DEPENDENT_MODE", schema = @Schema(implementation = ComplementDependentMode.class)),
+            @Parameter(name = "allLevelDependent", description = "ALL_LEVEL_DEPENDENT", schema = @Schema(implementation = boolean.class, example = "false")),
+            @Parameter(name = "executionOrder", description = "EXECUTION_ORDER", schema = @Schema(implementation = ExecutionOrder.class))
     })
-    @PostMapping(value = "start-process-instance")
+    @PostMapping(value = "start-workflow-instance")
     @ResponseStatus(HttpStatus.OK)
-    @ApiException(START_PROCESS_INSTANCE_ERROR)
-    public Result startProcessInstance(@ApiIgnore @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
-                                       @ApiParam(name = "projectName", value = "PROJECT_NAME", required = true) @PathVariable String projectName,
-                                       @RequestParam(value = "processDefinitionId") int processDefinitionId,
-                                       @RequestParam(value = "scheduleTime", required = false) String scheduleTime,
-                                       @RequestParam(value = "failureStrategy", required = true) FailureStrategy failureStrategy,
-                                       @RequestParam(value = "startNodeList", required = false) String startNodeList,
-                                       @RequestParam(value = "taskDependType", required = false) TaskDependType taskDependType,
-                                       @RequestParam(value = "execType", required = false) CommandType execType,
-                                       @RequestParam(value = "warningType", required = true) WarningType warningType,
-                                       @RequestParam(value = "warningGroupId", required = false) int warningGroupId,
-                                       @RequestParam(value = "runMode", required = false) RunMode runMode,
-                                       @RequestParam(value = "processInstancePriority", required = false) Priority processInstancePriority,
-                                       @RequestParam(value = "workerGroup", required = false, defaultValue = "default") String workerGroup,
-                                       @RequestParam(value = "timeout", required = false) Integer timeout,
-                                       @RequestParam(value = "startParams", required = false) String startParams) {
-        logger.info("login user {}, start process instance, project name: {}, process definition id: {}, schedule time: {},  "
-                        + "failure policy: {}, node name: {}, node dep: {}, notify type: {}, "
-                        + "notify group id: {}, run mode: {},process instance priority:{}, workerGroup: {}, timeout: {}, startParams: {} ",
-                loginUser.getUserName(), projectName, processDefinitionId, scheduleTime,
-                failureStrategy, startNodeList, taskDependType, warningType, workerGroup, runMode, processInstancePriority,
-                workerGroup, timeout, startParams);
-
-        if (timeout == null) {
-            timeout = Constants.MAX_TASK_TIMEOUT;
+    @ApiException(START_WORKFLOW_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.WORKFLOW_START)
+    public Result<List<Integer>> triggerWorkflowDefinition(@Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                           @Parameter(name = "projectCode", description = "PROJECT_CODE", required = true) @PathVariable long projectCode,
+                                                           @RequestParam(value = "workflowDefinitionCode") long workflowDefinitionCode,
+                                                           @RequestParam(value = "scheduleTime") String scheduleTime,
+                                                           @RequestParam(value = "failureStrategy") FailureStrategy failureStrategy,
+                                                           @RequestParam(value = "startNodeList", required = false) String startNodeList,
+                                                           @RequestParam(value = "taskDependType", required = false, defaultValue = "TASK_POST") TaskDependType taskDependType,
+                                                           @RequestParam(value = "execType", required = false, defaultValue = "START_PROCESS") CommandType execType,
+                                                           @RequestParam(value = "warningType") WarningType warningType,
+                                                           @RequestParam(value = "warningGroupId", required = false) Integer warningGroupId,
+                                                           @RequestParam(value = "runMode", required = false) RunMode runMode,
+                                                           @RequestParam(value = "workflowInstancePriority", required = false) Priority workflowInstancePriority,
+                                                           @RequestParam(value = "workerGroup", required = false, defaultValue = "default") String workerGroup,
+                                                           @RequestParam(value = "tenantCode", required = false, defaultValue = "default") String tenantCode,
+                                                           @RequestParam(value = "environmentCode", required = false, defaultValue = "-1") Long environmentCode,
+                                                           @RequestParam(value = "startParams", required = false) String startParams,
+                                                           @RequestParam(value = "expectedParallelismNumber", required = false) Integer expectedParallelismNumber,
+                                                           @RequestParam(value = "dryRun", defaultValue = "0", required = false) int dryRun,
+                                                           @RequestParam(value = "complementDependentMode", required = false) ComplementDependentMode complementDependentMode,
+                                                           @RequestParam(value = "allLevelDependent", required = false, defaultValue = "false") boolean allLevelDependent,
+                                                           @RequestParam(value = "executionOrder", required = false) ExecutionOrder executionOrder) {
+        switch (execType) {
+            case START_PROCESS:
+                final WorkflowTriggerRequest workflowTriggerRequest = WorkflowTriggerRequest.builder()
+                        .loginUser(loginUser)
+                        .projectCode(projectCode)
+                        .workflowDefinitionCode(workflowDefinitionCode)
+                        .startNodes(startNodeList)
+                        .failureStrategy(failureStrategy)
+                        .taskDependType(taskDependType)
+                        .execType(execType)
+                        .warningType(warningType)
+                        .warningGroupId(warningGroupId)
+                        .workflowInstancePriority(workflowInstancePriority)
+                        .workerGroup(workerGroup)
+                        .tenantCode(tenantCode)
+                        .environmentCode(environmentCode)
+                        .startParamList(startParams)
+                        .dryRun(Flag.of(dryRun))
+                        .build();
+                return Result
+                        .success(Lists.newArrayList(execService.triggerWorkflowDefinition(workflowTriggerRequest)));
+            case COMPLEMENT_DATA:
+                final WorkflowBackFillRequest workflowBackFillRequest = WorkflowBackFillRequest.builder()
+                        .loginUser(loginUser)
+                        .projectCode(projectCode)
+                        .workflowDefinitionCode(workflowDefinitionCode)
+                        .startNodes(startNodeList)
+                        .failureStrategy(failureStrategy)
+                        .taskDependType(taskDependType)
+                        .execType(execType)
+                        .warningType(warningType)
+                        .warningGroupId(warningGroupId)
+                        .backfillRunMode(runMode)
+                        .workflowInstancePriority(workflowInstancePriority)
+                        .workerGroup(workerGroup)
+                        .tenantCode(tenantCode)
+                        .environmentCode(environmentCode)
+                        .startParamList(startParams)
+                        .dryRun(Flag.of(dryRun))
+                        .backfillTime(WorkflowUtils.parseBackfillTime(scheduleTime))
+                        .expectedParallelismNumber(expectedParallelismNumber)
+                        .backfillDependentMode(complementDependentMode)
+                        .allLevelDependent(allLevelDependent)
+                        .executionOrder(executionOrder)
+                        .build();
+                return Result.success(execService.backfillWorkflowDefinition(workflowBackFillRequest));
+            default:
+                throw new ServiceException("The execType: " + execType + " is invalid");
         }
+    }
+
+    /**
+     * batch execute workflow instance
+     * If any workflowDefinitionCode cannot be found, the failure information is returned and the status is set to
+     * failed. The successful task will run normally and will not stop
+     *
+     * @param loginUser                 login user
+     * @param workflowDefinitionCodes    workflow definition codes
+     * @param scheduleTime              schedule time
+     * @param failureStrategy           failure strategy
+     * @param startNodeList             start nodes list
+     * @param taskDependType            task depend type
+     * @param execType                  execute type
+     * @param warningType               warning type
+     * @param warningGroupId            warning group id
+     * @param runMode                   run mode
+     * @param workflowInstancePriority   workflow instance priority
+     * @param workerGroup               worker group
+     * @param tenantCode                tenant code
+     * @param expectedParallelismNumber the expected parallelism number when execute complement in parallel mode
+     * @param executionOrder            complement data in some kind of order
+     * @return start workflow result code
+     */
+    @Operation(summary = "batchStartWorkflowInstance", description = "BATCH_RUN_WORKFLOW_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "workflowDefinitionCodes", description = "WORKFLOW_DEFINITION_CODE_LIST", required = true, schema = @Schema(implementation = String.class, example = "1,2,3")),
+            @Parameter(name = "scheduleTime", description = "SCHEDULE_TIME", required = true, schema = @Schema(implementation = String.class, example = "2022-04-06 00:00:00,2022-04-06 00:00:00")),
+            @Parameter(name = "failureStrategy", description = "FAILURE_STRATEGY", required = true, schema = @Schema(implementation = FailureStrategy.class)),
+            @Parameter(name = "startNodeList", description = "START_NODE_LIST", schema = @Schema(implementation = String.class)),
+            @Parameter(name = "taskDependType", description = "TASK_DEPEND_TYPE", schema = @Schema(implementation = TaskDependType.class)),
+            @Parameter(name = "execType", description = "COMMAND_TYPE", schema = @Schema(implementation = CommandType.class)),
+            @Parameter(name = "warningType", description = "WARNING_TYPE", required = true, schema = @Schema(implementation = WarningType.class)),
+            @Parameter(name = "warningGroupId", description = "WARNING_GROUP_ID", required = true, schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "runMode", description = "RUN_MODE", schema = @Schema(implementation = RunMode.class)),
+            @Parameter(name = "workflowInstancePriority", description = "WORKFLOW_INSTANCE_PRIORITY", required = true, schema = @Schema(implementation = Priority.class)),
+            @Parameter(name = "workerGroup", description = "WORKER_GROUP", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "tenantCode", description = "TENANT_CODE", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "environmentCode", description = "ENVIRONMENT_CODE", schema = @Schema(implementation = Long.class, example = "-1")),
+            @Parameter(name = "expectedParallelismNumber", description = "EXPECTED_PARALLELISM_NUMBER", schema = @Schema(implementation = int.class, example = "8")),
+            @Parameter(name = "dryRun", description = "DRY_RUN", schema = @Schema(implementation = int.class, example = "0")),
+            @Parameter(name = "complementDependentMode", description = "COMPLEMENT_DEPENDENT_MODE", schema = @Schema(implementation = ComplementDependentMode.class)),
+            @Parameter(name = "allLevelDependent", description = "ALL_LEVEL_DEPENDENT", schema = @Schema(implementation = boolean.class, example = "false")),
+            @Parameter(name = "executionOrder", description = "EXECUTION_ORDER", schema = @Schema(implementation = ExecutionOrder.class))
+    })
+    @PostMapping(value = "batch-start-workflow-instance")
+    @ResponseStatus(HttpStatus.OK)
+    @ApiException(BATCH_START_WORKFLOW_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.WORKFLOW_BATCH_START)
+    public Result<List<Integer>> batchTriggerWorkflowDefinitions(@Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                                 @Parameter(name = "projectCode", description = "PROJECT_CODE", required = true) @PathVariable long projectCode,
+                                                                 @RequestParam(value = "workflowDefinitionCodes") String workflowDefinitionCodes,
+                                                                 @RequestParam(value = "scheduleTime") String scheduleTime,
+                                                                 @RequestParam(value = "failureStrategy") FailureStrategy failureStrategy,
+                                                                 @RequestParam(value = "startNodeList", required = false) String startNodeList,
+                                                                 @RequestParam(value = "taskDependType", required = false) TaskDependType taskDependType,
+                                                                 @RequestParam(value = "execType", required = false) CommandType execType,
+                                                                 @RequestParam(value = "warningType") WarningType warningType,
+                                                                 @RequestParam(value = "warningGroupId", required = false) Integer warningGroupId,
+                                                                 @RequestParam(value = "runMode", required = false) RunMode runMode,
+                                                                 @RequestParam(value = "workflowInstancePriority", required = false) Priority workflowInstancePriority,
+                                                                 @RequestParam(value = "workerGroup", required = false, defaultValue = "default") String workerGroup,
+                                                                 @RequestParam(value = "tenantCode", required = false, defaultValue = "default") String tenantCode,
+                                                                 @RequestParam(value = "environmentCode", required = false, defaultValue = "-1") Long environmentCode,
+                                                                 @RequestParam(value = "startParams", required = false) String startParams,
+                                                                 @RequestParam(value = "expectedParallelismNumber", required = false) Integer expectedParallelismNumber,
+                                                                 @RequestParam(value = "dryRun", defaultValue = "0", required = false) int dryRun,
+                                                                 @RequestParam(value = "complementDependentMode", required = false) ComplementDependentMode complementDependentMode,
+                                                                 @RequestParam(value = "allLevelDependent", required = false, defaultValue = "false") boolean allLevelDependent,
+                                                                 @RequestParam(value = "executionOrder", required = false) ExecutionOrder executionOrder) {
+        List<Long> workflowDefinitionCodeList = Arrays.stream(workflowDefinitionCodes.split(Constants.COMMA))
+                .map(Long::parseLong)
+                .collect(Collectors.toList());
+
+        List<Integer> result = new ArrayList<>();
+        for (Long workflowDefinitionCode : workflowDefinitionCodeList) {
+            Result<List<Integer>> workflowInstanceIds = triggerWorkflowDefinition(loginUser,
+                    projectCode,
+                    workflowDefinitionCode,
+                    scheduleTime,
+                    failureStrategy,
+                    startNodeList,
+                    taskDependType,
+                    execType,
+                    warningType,
+                    warningGroupId,
+                    runMode,
+                    workflowInstancePriority,
+                    workerGroup,
+                    tenantCode,
+                    environmentCode,
+                    startParams,
+                    expectedParallelismNumber,
+                    dryRun,
+                    complementDependentMode,
+                    allLevelDependent,
+                    executionOrder);
+            result.addAll(workflowInstanceIds.getData());
+        }
+        return Result.success(result);
+    }
+
+    /**
+     * do action to workflow instance: pause, stop, repeat, recover from pause, recover from stop
+     */
+    @Operation(summary = "execute", description = "EXECUTE_ACTION_TO_WORKFLOW_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "workflowInstanceId", description = "WORKFLOW_INSTANCE_ID", required = true, schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "executeType", description = "EXECUTE_TYPE", required = true, schema = @Schema(implementation = ExecuteType.class))
+    })
+    @PostMapping(value = "/execute")
+    @ResponseStatus(HttpStatus.OK)
+    @ApiException(EXECUTE_WORKFLOW_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.WORKFLOW_EXECUTE)
+    public Result<Void> controlWorkflowInstance(@Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                @RequestParam("workflowInstanceId") Integer workflowInstanceId,
+                                                @RequestParam("executeType") ExecuteType executeType) {
+        execService.controlWorkflowInstance(loginUser, workflowInstanceId, executeType);
+        return Result.success();
+    }
+
+    /**
+     * batch execute and do action to workflow instance
+     *
+     * @param loginUser          login user
+     * @param workflowInstanceIds workflow instance ids, delimiter by "," if more than one id
+     * @param executeType        execute type
+     * @return execute result code
+     */
+    @Operation(summary = "batchExecute", description = "BATCH_EXECUTE_ACTION_TO_WORKFLOW_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "projectCode", description = "PROJECT_CODE", required = true, schema = @Schema(implementation = int.class)),
+            @Parameter(name = "workflowInstanceIds", description = "WORKFLOW_INSTANCE_IDS", required = true, schema = @Schema(implementation = String.class)),
+            @Parameter(name = "executeType", description = "EXECUTE_TYPE", required = true, schema = @Schema(implementation = ExecuteType.class))
+    })
+    @PostMapping(value = "/batch-execute")
+    @ResponseStatus(HttpStatus.OK)
+    @ApiException(BATCH_EXECUTE_WORKFLOW_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.WORKFLOW_BATCH_RERUN)
+    public Result<Void> batchControlWorkflowInstance(@RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                     @RequestParam("workflowInstanceIds") String workflowInstanceIds,
+                                                     @RequestParam("executeType") ExecuteType executeType) {
+
+        String[] workflowInstanceIdArray = workflowInstanceIds.split(Constants.COMMA);
+        List<String> errorMessage = new ArrayList<>();
+        for (String strWorkflowInstanceId : workflowInstanceIdArray) {
+            int workflowInstanceId = Integer.parseInt(strWorkflowInstanceId);
+            try {
+                execService.controlWorkflowInstance(loginUser, workflowInstanceId, executeType);
+                log.info("Success do action {} on workflowInstance: {}", executeType, workflowInstanceId);
+            } catch (Exception e) {
+                errorMessage.add("Failed do action " + executeType + " on workflowInstance: " + workflowInstanceId
+                        + "reason: " + e.getMessage());
+                log.error("Failed do action {} on workflowInstance: {}, error: {}", executeType, workflowInstanceId, e);
+            }
+        }
+        if (org.apache.commons.collections4.CollectionUtils.isNotEmpty(errorMessage)) {
+            throw new ServiceException(String.join("\n", errorMessage));
+        }
+        return Result.success();
+    }
+
+    /**
+     * execute task instance
+     *
+     * @param loginUser      login user
+     * @param projectCode    project code
+     * @param code           taskDefinitionCode
+     * @param version        taskDefinitionVersion
+     * @param warningGroupId warning group id
+     * @param workerGroup    worker group
+     * @return start task result code
+     */
+    @Operation(summary = "startTaskInstance", description = "RUN_TASK_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "version", description = "VERSION", schema = @Schema(implementation = int.class, example = "1")),
+            @Parameter(name = "failureStrategy", description = "FAILURE_STRATEGY", required = true, schema = @Schema(implementation = FailureStrategy.class)),
+            @Parameter(name = "execType", description = "COMMAND_TYPE", schema = @Schema(implementation = CommandType.class)),
+            @Parameter(name = "warningType", description = "WARNING_TYPE", required = true, schema = @Schema(implementation = WarningType.class)),
+            @Parameter(name = "warningGroupId", description = "WARNING_GROUP_ID", schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "workerGroup", description = "WORKER_GROUP", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "tenantCode", description = "TENANT_CODE", schema = @Schema(implementation = String.class, example = "default")),
+            @Parameter(name = "environmentCode", description = "ENVIRONMENT_CODE", schema = @Schema(implementation = long.class, example = "-1")),
+            @Parameter(name = "timeout", description = "TIMEOUT", schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "dryRun", description = "DRY_RUN", schema = @Schema(implementation = int.class, example = "0")),
+    })
+    @PostMapping(value = "/task-instance/{code}/start")
+    @ResponseStatus(HttpStatus.OK)
+    @ApiException(START_TASK_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.TASK_START)
+    public Result<Boolean> startStreamTaskInstance(@Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                   @Parameter(name = "projectCode", description = "PROJECT_CODE", required = true) @PathVariable long projectCode,
+                                                   @Parameter(name = "code", description = "TASK_CODE", required = true) @PathVariable long code,
+                                                   @RequestParam(value = "version", required = true) int version,
+                                                   @RequestParam(value = "warningGroupId", required = false, defaultValue = "0") Integer warningGroupId,
+                                                   @RequestParam(value = "workerGroup", required = false, defaultValue = "default") String workerGroup,
+                                                   @RequestParam(value = "tenantCode", required = false, defaultValue = "default") String tenantCode,
+                                                   @RequestParam(value = "environmentCode", required = false, defaultValue = "-1") Long environmentCode,
+                                                   @RequestParam(value = "startParams", required = false) String startParams,
+                                                   @RequestParam(value = "dryRun", defaultValue = "0", required = false) int dryRun) {
+
         Map<String, String> startParamMap = null;
         if (startParams != null) {
             startParamMap = JSONUtils.toMap(startParams);
         }
-        Map<String, Object> result = execService.execProcessInstance(loginUser, projectName, processDefinitionId, scheduleTime, execType, failureStrategy,
-                startNodeList, taskDependType, warningType,
-                warningGroupId, runMode, processInstancePriority, workerGroup, timeout, startParamMap);
-        return returnDataList(result);
+
+        log.info("Start to execute stream task instance, projectCode:{}, taskDefinitionCode:{}, taskVersion:{}.",
+                projectCode, code, version);
+        execService.execStreamTaskInstance(loginUser, projectCode, code, version, warningGroupId, workerGroup,
+                tenantCode, environmentCode, startParamMap, dryRun);
+        return Result.success(true);
     }
 
-
     /**
-     * do action to process instance：pause, stop, repeat, recover from pause, recover from stop
+     * do action to workflow instance: pause, stop, repeat, recover from pause, recover from stop
      *
-     * @param loginUser login user
-     * @param projectName project name
-     * @param processInstanceId process instance id
-     * @param executeType execute type
+     * @param loginUser         login user
+     * @param projectCode       project code
+     * @param workflowInstanceId workflow instance id
+     * @param startNodeList     start node list
+     * @param taskDependType    task depend type
      * @return execute result code
      */
-    @ApiOperation(value = "execute", notes = "EXECUTE_ACTION_TO_PROCESS_INSTANCE_NOTES")
-    @ApiImplicitParams({
-            @ApiImplicitParam(name = "processInstanceId", value = "PROCESS_INSTANCE_ID", required = true, dataType = "Int", example = "100"),
-            @ApiImplicitParam(name = "executeType", value = "EXECUTE_TYPE", required = true, dataType = "ExecuteType")
+    @Operation(summary = "execute-task", description = "EXECUTE_ACTION_TO_WORKFLOW_INSTANCE_NOTES")
+    @Parameters({
+            @Parameter(name = "workflowInstanceId", description = "WORKFLOW_INSTANCE_ID", required = true, schema = @Schema(implementation = int.class, example = "100")),
+            @Parameter(name = "startNodeList", description = "START_NODE_LIST", required = true, schema = @Schema(implementation = String.class)),
+            @Parameter(name = "taskDependType", description = "TASK_DEPEND_TYPE", required = true, schema = @Schema(implementation = TaskDependType.class))
     })
-    @PostMapping(value = "/execute")
+    @PostMapping(value = "/execute-task")
     @ResponseStatus(HttpStatus.OK)
-    @ApiException(EXECUTE_PROCESS_INSTANCE_ERROR)
-    public Result execute(@ApiIgnore @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
-                          @ApiParam(name = "projectName", value = "PROJECT_NAME", required = true) @PathVariable String projectName,
-                          @RequestParam("processInstanceId") Integer processInstanceId,
-                          @RequestParam("executeType") ExecuteType executeType
-    ) {
-        logger.info("execute command, login user: {}, project:{}, process instance id:{}, execute type:{}",
-                loginUser.getUserName(), projectName, processInstanceId, executeType);
-        Map<String, Object> result = execService.execute(loginUser, projectName, processInstanceId, executeType);
-        return returnDataList(result);
+    @ApiException(EXECUTE_WORKFLOW_INSTANCE_ERROR)
+    @OperatorLog(auditType = AuditType.WORKFLOW_EXECUTE)
+    public Result executeTask(@Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                              @Parameter(name = "projectCode", description = "PROJECT_CODE", required = true) @PathVariable long projectCode,
+                              @RequestParam("workflowInstanceId") Integer workflowInstanceId,
+                              @RequestParam("startNodeList") String startNodeList,
+                              @RequestParam("taskDependType") TaskDependType taskDependType) {
+        log.info("Start to execute task in workflow instance, projectCode:{}, workflowInstanceId:{}.",
+                projectCode,
+                workflowInstanceId);
+        return execService.executeTask(loginUser, projectCode, workflowInstanceId, startNodeList, taskDependType);
     }
 
-    /**
-     * check process definition and all of the son process definitions is on line.
-     *
-     * @param loginUser login user
-     * @param processDefinitionId process definition id
-     * @return check result code
-     */
-    @ApiOperation(value = "startCheckProcessDefinition", notes = "START_CHECK_PROCESS_DEFINITION_NOTES")
-    @ApiImplicitParams({
-            @ApiImplicitParam(name = "processDefinitionId", value = "PROCESS_DEFINITION_ID", required = true, dataType = "Int", example = "100")
-    })
-    @PostMapping(value = "/start-check")
-    @ResponseStatus(HttpStatus.OK)
-    @ApiException(CHECK_PROCESS_DEFINITION_ERROR)
-    public Result startCheckProcessDefinition(@ApiIgnore @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
-                                              @RequestParam(value = "processDefinitionId") int processDefinitionId) {
-        logger.info("login user {}, check process definition {}", loginUser.getUserName(), processDefinitionId);
-        Map<String, Object> result = execService.startCheckByProcessDefinedId(processDefinitionId);
-        return returnDataList(result);
-    }
 }

@@ -14,70 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.api.dto.treeview;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * TreeView
- */
+import lombok.Data;
+
+@Data
 public class TreeViewDto {
 
-    /**
-     * name
-     */
     private String name;
 
-    /**
-     * type
-     */
     private String type;
 
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    /**
-     * instances list
-     */
+    private long code;
 
     private List<Instance> instances = new ArrayList<>();
 
-    /**
-     * children
-     */
     private List<TreeViewDto> children = new ArrayList<>();
-
-
-    public List<Instance> getInstances() {
-        return instances;
-    }
-
-    public void setInstances(List<Instance> instances) {
-        this.instances = instances;
-    }
-
-    public List<TreeViewDto> getChildren() {
-        return children;
-    }
-
-    public void setChildren(List<TreeViewDto> children) {
-        this.children = children;
-    }
-
 
 }

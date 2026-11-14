@@ -25,20 +25,24 @@ header:
     - NOTICE
     - LICENSE
     - DISCLAIMER
-    - dolphinscheduler-common/src/main/java/org/apache/dolphinscheduler/common/utils/ScriptRunner.java
-    - mvnw.cmd
-    - sql/soft_version
+    - dolphinscheduler-common/src/main/java/org/apache/dolphinscheduler/common/utils/CodeGenerateUtils.java
+    - dolphinscheduler-dao/src/main/resources/sql/soft_version
     - .mvn
-    - .gitattributes
     - '**/licenses/**/LICENSE-*'
     - '**/*.md'
+    - '**/*.svg'
     - '**/*.json'
     - '**/*.iml'
     - '**/*.ini'
     - '**/.babelrc'
-    - '**/.eslintignore'
     - '**/.gitignore'
     - '**/LICENSE'
     - '**/NOTICE'
+    - '**/.gitkeep'
+    - tools/dependencies/known-dependencies.txt
+    - '**/banner.txt'
+    - '**/*-banner.txt'
+    - '.terraform.lock.hcl'
+    - deploy/kubernetes/dolphinscheduler/README.md.gotmpl
 
   comment: on-failure

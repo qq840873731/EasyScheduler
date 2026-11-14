@@ -14,15 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.api.exceptions;
 
 import org.apache.dolphinscheduler.api.enums.Status;
 import org.apache.dolphinscheduler.api.utils.Result;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.HandlerMethod;
 
@@ -31,20 +35,41 @@ import org.springframework.web.method.HandlerMethod;
  */
 @RestControllerAdvice
 @ResponseBody
+@Slf4j
 public class ApiExceptionHandler {
 
-    private static final Logger logger = LoggerFactory.getLogger(ApiExceptionHandler.class);
+    @ExceptionHandler(ServiceException.class)
+    public ResponseEntity<Result<Object>> exceptionHandler(ServiceException e, HandlerMethod hm) {
+        log.error("{} Meet a ServiceException: {}", hm.getShortLogMessage(), e.getMessage());
+        return ResponseEntity.status(resolveResponseStatus(hm))
+                .body(new Result<>(e.getCode(), e.getMessage()));
+    }
 
-    @ExceptionHandler(Exception.class)
-    public Result exceptionHandler(Exception e, HandlerMethod hm) {
+    @ExceptionHandler(Throwable.class)
+    public ResponseEntity<Result<Object>> exceptionHandler(Throwable e, HandlerMethod hm) {
         ApiException ce = hm.getMethodAnnotation(ApiException.class);
+        log.error("Meet an unknown exception: ", e);
+        Result<Object> body;
         if (ce == null) {
-            logger.error(e.getMessage(), e);
-            return Result.errorWithArgs(Status.INTERNAL_SERVER_ERROR_ARGS, e.getMessage());
+            body = Result.errorWithArgs(Status.INTERNAL_SERVER_ERROR_ARGS, e.getMessage());
+        } else {
+            Status st = ce.value();
+            body = new Result<>(st.getCode(), st.getMsg() + ":" + e.getMessage());
         }
-        Status st = ce.value();
-        logger.error(st.getMsg(), e);
-        return Result.error(st);
+        return ResponseEntity.status(resolveResponseStatus(hm)).body(body);
+    }
+
+    /**
+     * Honour the {@link ResponseStatus} declared on the controller method so that error responses
+     * keep the same HTTP status code as success responses on the same endpoint. Falls back to 200
+     * OK when the handler method does not declare one.
+     */
+    private static HttpStatus resolveResponseStatus(HandlerMethod hm) {
+        ResponseStatus status = hm.getMethodAnnotation(ResponseStatus.class);
+        if (status == null) {
+            status = hm.getBeanType().getAnnotation(ResponseStatus.class);
+        }
+        return status == null ? HttpStatus.OK : status.value();
     }
 
 }

@@ -14,13 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.dolphinscheduler.dao.entity;
 
+package org.apache.dolphinscheduler.dao.entity;
 
 import org.apache.dolphinscheduler.common.enums.CommandType;
 
-public class CommandCount {
+import lombok.Data;
 
+@Data
+public class CommandCount {
 
     /**
      * execution state
@@ -31,54 +33,4 @@ public class CommandCount {
      * count for state
      */
     private int count;
-
-
-    public CommandType getCommandType() {
-        return commandType;
-    }
-
-    public void setCommandType(CommandType commandType) {
-        this.commandType = commandType;
-    }
-
-    public int getCount() {
-        return count;
-    }
-
-    public void setCount(int count) {
-        this.count = count;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-
-        CommandCount that = (CommandCount) o;
-
-        if (count != that.count) {
-            return false;
-        }
-        return commandType == that.commandType;
-
-    }
-
-    @Override
-    public int hashCode() {
-        int result = commandType != null ? commandType.hashCode() : 0;
-        result = 31 * result + count;
-        return result;
-    }
-
-    @Override
-    public String toString() {
-        return "CommandCount{" +
-                "commandType=" + commandType +
-                ", count=" + count +
-                '}';
-    }
 }

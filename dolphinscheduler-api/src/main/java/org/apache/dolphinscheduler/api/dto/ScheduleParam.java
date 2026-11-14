@@ -14,62 +14,58 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.api.dto;
 
-import com.fasterxml.jackson.annotation.JsonFormat;
+import org.apache.dolphinscheduler.common.enums.ScheduleMissedFirePolicy;
 
 import java.util.Date;
+
+import lombok.Data;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 /**
  * schedule parameters
  */
+@Data
 public class ScheduleParam {
-  @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
-  private Date startTime;
-  @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone="GMT+8")
-  private Date endTime;
-  private String crontab;
 
-  public ScheduleParam() {
-  }
+    private Date startTime;
+    private Date endTime;
+    private String crontab;
+    private String timezoneId;
+    private ScheduleMissedFirePolicy missedFirePolicy = ScheduleMissedFirePolicy.FIRE_ALL_MISSED;
 
-  public ScheduleParam(Date startTime, Date endTime, String crontab) {
-    this.startTime = startTime;
-    this.endTime = endTime;
-    this.crontab = crontab;
-  }
+    @JsonIgnore
+    private boolean missedFirePolicySet;
 
-  public Date getStartTime() {
-    return startTime;
-  }
+    public ScheduleParam() {
+    }
 
-  public void setStartTime(Date startTime) {
-    this.startTime = startTime;
-  }
+    public ScheduleParam(Date startTime, Date endTime, String timezoneId, String crontab) {
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.timezoneId = timezoneId;
+        this.crontab = crontab;
+    }
 
-  public Date getEndTime() {
-    return endTime;
-  }
+    public void setMissedFirePolicy(ScheduleMissedFirePolicy missedFirePolicy) {
+        this.missedFirePolicy = missedFirePolicy;
+        this.missedFirePolicySet = true;
+    }
 
-  public void setEndTime(Date endTime) {
-    this.endTime = endTime;
-  }
+    public boolean isMissedFirePolicySet() {
+        return missedFirePolicySet;
+    }
 
-  public String getCrontab() {
-    return crontab;
-  }
-
-  public void setCrontab(String crontab) {
-    this.crontab = crontab;
-  }
-
-
-  @Override
-  public String toString() {
-    return "ScheduleParam{" +
-            "startTime=" + startTime +
-            ", endTime=" + endTime +
-            ", crontab='" + crontab + '\'' +
-            '}';
-  }
+    @Override
+    public String toString() {
+        return "ScheduleParam{"
+                + "startTime=" + startTime
+                + ", endTime=" + endTime
+                + ", crontab='" + crontab + '\''
+                + ", timezoneId='" + timezoneId + '\''
+                + '}';
+    }
 }

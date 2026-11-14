@@ -14,22 +14,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.common.enums;
+
+import lombok.Getter;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 
 /**
- * warning message notification method
+ * describe the reason why alert generates
  */
+@Getter
 public enum AlertType {
+
     /**
-     * 0 email; 1 SMS
-     */
-    EMAIL(0, "email"),
-    SMS(1, "SMS");
+     * 0 workflow instance failure, 1 workflow instance success, 2 workflow instance blocked, 3 workflow instance timeout, 4 fault tolerance warning,
+     * 5 task failure, 6 task success, 7 task timeout, 8 task result
+      */
+    WORKFLOW_INSTANCE_FAILURE(0, "workflow instance failure"),
+    WORKFLOW_INSTANCE_SUCCESS(1, "workflow instance success"),
+    WORKFLOW_INSTANCE_BLOCKED(2, "workflow instance blocked"),
+    WORKFLOW_INSTANCE_TIMEOUT(3, "workflow instance timeout"),
+    FAULT_TOLERANCE_WARNING(4, "fault tolerance warning"),
+    TASK_FAILURE(5, "task failure"),
+    TASK_SUCCESS(6, "task success"),
+    TASK_TIMEOUT(7, "task timeout"),
+    TASK_RESULT(8, "task result"),
+    ;
 
-
-    AlertType(int code, String descp){
+    AlertType(int code, String descp) {
         this.code = code;
         this.descp = descp;
     }
@@ -38,11 +51,4 @@ public enum AlertType {
     private final int code;
     private final String descp;
 
-    public int getCode() {
-        return code;
-    }
-
-    public String getDescp() {
-        return descp;
-    }
 }

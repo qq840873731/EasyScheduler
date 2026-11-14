@@ -17,59 +17,127 @@
 
 package org.apache.dolphinscheduler.dao.mapper;
 
-import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
 import org.apache.dolphinscheduler.common.enums.Flag;
+import org.apache.dolphinscheduler.common.enums.TaskExecuteType;
 import org.apache.dolphinscheduler.dao.entity.ExecuteStatusCount;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
+import org.apache.dolphinscheduler.dao.model.TaskInstanceStatusCountDto;
+import org.apache.dolphinscheduler.plugin.task.api.enums.TaskExecutionStatus;
 
 import org.apache.ibatis.annotations.Param;
 
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 
-/**
- * task instance mapper interface
- */
 public interface TaskInstanceMapper extends BaseMapper<TaskInstance> {
 
-    List<Integer> queryTaskByProcessIdAndState(@Param("processInstanceId") Integer processInstanceId,
-                                               @Param("state") Integer state);
+    List<TaskInstance> findValidTaskListByWorkflowInstanceId(@Param("workflowInstanceId") Integer workflowInstanceId,
+                                                             @Param("flag") Flag flag);
 
-    List<TaskInstance> findValidTaskListByProcessId(@Param("processInstanceId") Integer processInstanceId,
-                                                    @Param("flag") Flag flag);
+    TaskInstance queryByInstanceIdAndCode(@Param("workflowInstanceId") int workflowInstanceId,
+                                          @Param("taskCode") Long taskCode);
 
-    List<TaskInstance> queryByHostAndStatus(@Param("host") String host,
-                                            @Param("states") int[] stateArray);
+    List<TaskInstance> queryByWorkflowInstanceIdsAndTaskCodes(@Param("workflowInstanceIds") List<Integer> workflowInstanceIds,
+                                                              @Param("taskCodes") List<Long> taskCodes);
 
-    int setFailoverByHostAndStateArray(@Param("host") String host,
-                                       @Param("states") int[] stateArray,
-                                       @Param("destStatus") ExecutionStatus destStatus);
+    /**
+     * Statistics task instance group by given project codes list by start time
+     * <p>
+     * We only need project codes to determine whether the task instance belongs to the user or not.
+     *
+     * @param startTime    Statistics start time
+     * @param endTime      Statistics end time
+     * @param projectCodes Project codes list to filter
+     * @return List of ExecuteStatusCount
+     */
+    List<TaskInstanceStatusCountDto> countTaskInstanceStateByProjectCodes(@Param("startTime") Date startTime,
+                                                                          @Param("endTime") Date endTime,
+                                                                          @Param("projectCodes") Collection<Long> projectCodes);
 
-    TaskInstance queryByInstanceIdAndName(@Param("processInstanceId") int processInstanceId,
-                                          @Param("name") String name);
+    /**
+     * Statistics task instance group by given project ids list by start time
+     * <p>
+     * We only need project ids to determine whether the task instance belongs to the user or not.
+     *
+     * @param startTime    Statistics start time
+     * @param endTime      Statistics end time
+     * @param projectIds Project ids list to filter
+     * @return List of ExecuteStatusCount
+     */
+    List<ExecuteStatusCount> countTaskInstanceStateByProjectIdsV2(@Param("startTime") Date startTime,
+                                                                  @Param("endTime") Date endTime,
+                                                                  @Param("projectIds") Set<Integer> projectIds);
 
-    Integer countTask(
-                      @Param("projectIds") Integer[] projectIds,
-                      @Param("taskIds") int[] taskIds);
-
-    List<ExecuteStatusCount> countTaskInstanceStateByUser(
-                                                          @Param("startTime") Date startTime,
-                                                          @Param("endTime") Date endTime,
-                                                          @Param("projectIds") Integer[] projectIds);
+    /**
+     * Statistics task instance group by given project codes list by submit time
+     * <p>
+     * We only need project codes to determine whether the task instance belongs to the user or not.
+     *
+     * @param startTime    Statistics start time
+     * @param endTime      Statistics end time
+     * @param projectCode  projectCode
+     * @param model model
+     * @param projectIds projectIds
+     * @return List of ExecuteStatusCount
+     */
+    List<ExecuteStatusCount> countTaskInstanceStateByProjectCodesAndStatesBySubmitTimeV2(@Param("startTime") Date startTime,
+                                                                                         @Param("endTime") Date endTime,
+                                                                                         @Param("projectCode") Long projectCode,
+                                                                                         @Param("workflowCode") Long workflowCode,
+                                                                                         @Param("taskCode") Long taskCode,
+                                                                                         @Param("model") Integer model,
+                                                                                         @Param("projectIds") Set<Integer> projectIds,
+                                                                                         @Param("states") List<TaskExecutionStatus> states);
 
     IPage<TaskInstance> queryTaskInstanceListPaging(IPage<TaskInstance> page,
-                                                    @Param("projectId") int projectId,
-                                                    @Param("processInstanceId") Integer processInstanceId,
-                                                    @Param("processInstanceName") String processInstanceName,
+                                                    @Param("projectCode") Long projectCode,
+                                                    @Param("workflowInstanceId") Integer workflowInstanceId,
+                                                    @Param("workflowInstanceName") String workflowInstanceName,
                                                     @Param("searchVal") String searchVal,
                                                     @Param("taskName") String taskName,
-                                                    @Param("executorId") int executorId,
+                                                    @Param("taskCode") Long taskCode,
+                                                    @Param("executorName") String executorName,
                                                     @Param("states") int[] statusArray,
                                                     @Param("host") String host,
+                                                    @Param("taskExecuteType") TaskExecuteType taskExecuteType,
                                                     @Param("startTime") Date startTime,
-                                                    @Param("endTime") Date endTime
-    );
+                                                    @Param("endTime") Date endTime);
+
+    IPage<TaskInstance> queryStreamTaskInstanceListPaging(IPage<TaskInstance> page,
+                                                          @Param("projectCode") Long projectCode,
+                                                          @Param("workflowDefinitionName") String workflowDefinitionName,
+                                                          @Param("searchVal") String searchVal,
+                                                          @Param("taskName") String taskName,
+                                                          @Param("taskCode") Long taskCode,
+                                                          @Param("executorName") String executorName,
+                                                          @Param("states") int[] statusArray,
+                                                          @Param("host") String host,
+                                                          @Param("taskExecuteType") TaskExecuteType taskExecuteType,
+                                                          @Param("startTime") Date startTime,
+                                                          @Param("endTime") Date endTime);
+
+    void deleteByWorkflowInstanceId(@Param("workflowInstanceId") int workflowInstanceId);
+
+    List<TaskInstance> findByWorkflowInstanceId(@Param("workflowInstanceId") Integer workflowInstanceId);
+
+    /**
+     * find last task instance list in the date interval
+     *
+     * @param taskCodes taskCodes
+     * @return task instance list
+     */
+    List<TaskInstance> findLastTaskInstances(@Param("workflowInstanceId") Integer workflowInstanceId,
+                                             @Param("taskCodes") Set<Long> taskCodes);
+
+    TaskInstance findLastTaskInstance(@Param("workflowInstanceId") Integer workflowInstanceId,
+                                      @Param("taskCode") long depTaskCode);
+
+    void updateTaskInstanceState(@Param("taskInstanceId") Integer taskInstanceId,
+                                 @Param("originState") int originState,
+                                 @Param("targetState") int targetState);
 }

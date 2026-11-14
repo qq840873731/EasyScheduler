@@ -14,7 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.common.enums;
+
+import lombok.Getter;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 
@@ -26,7 +29,9 @@ import com.baomidou.mybatisplus.annotation.EnumValue;
  * have_map_variables
  * have_alert
  */
+@Getter
 public enum Flag {
+
     /**
      * 0 no
      * 1 yes
@@ -34,8 +39,7 @@ public enum Flag {
     NO(0, "no"),
     YES(1, "yes");
 
-
-    Flag(int code, String descp){
+    Flag(int code, String descp) {
         this.code = code;
         this.descp = descp;
     }
@@ -44,11 +48,10 @@ public enum Flag {
     private final int code;
     private final String descp;
 
-    public int getCode() {
-        return code;
-    }
-
-    public String getDescp() {
-        return descp;
+    public static Flag of(int code) {
+        if (code == 0) {
+            return NO;
+        }
+        return YES;
     }
 }
